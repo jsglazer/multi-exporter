@@ -1,0 +1,11 @@
+--- a/vendor/pagedjs/paged.polyfill.js
++++ b/vendor/pagedjs/paged.polyfill.js
+@@ -1096,6 +1096,8 @@
+ 	}
+ 
+ 	function findElement(node, doc, forceQuery) {
++		// multi-exporter patch: guard against null nodes at layout boundaries.
++		if (!node) return null;
+ 		const ref = node.getAttribute("data-ref");
+ 		return findRef(ref, doc, forceQuery);
+ 	}

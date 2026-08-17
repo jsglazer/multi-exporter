@@ -1,0 +1,153 @@
+/* Multi Exporter — host-side UI only. Everything that styles the *exported page* is a
+   profile stylesheet, editable in settings; nothing here leaks into the paginated output,
+   which lives in its own webview realm. */
+
+/* --- preview container ------------------------------------------------------------ */
+
+.mx-preview-container {
+	display: block;
+	width: 100%;
+	height: 100%;
+	min-height: 400px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	background: var(--background-secondary);
+}
+
+/* Off-screen, NOT hidden.
+
+   `display: none` collapses the box, and paged.js computes page breaks from measured
+   geometry — hiding it that way does not slow pagination, it silently yields wrong or zero
+   pages. Absolute positioning off-screen keeps every measurement real while the container
+   works behind the bulk-export progress list. */
+.mx-preview-container.mx-preview-offscreen {
+	position: absolute;
+	left: -10000px;
+	top: 0;
+	/* Real dimensions are the whole point of this rule. */
+	width: 900px;
+	height: 1200px;
+	pointer-events: none;
+}
+
+/* --- render host ------------------------------------------------------------------ */
+
+/* Where notes are rendered before being handed to the paginator. Off-screen for the same
+   reason as the preview: the renderer needs layout, and Dataview needs a real box to
+   measure against. */
+.mx-render-host-root {
+	position: absolute;
+	left: -10000px;
+	top: 0;
+	width: 900px;
+	height: auto;
+	overflow: visible;
+	pointer-events: none;
+}
+
+/* --- export modal ----------------------------------------------------------------- */
+
+.mx-export-modal {
+	width: min(1100px, 92vw);
+}
+
+.mx-export-layout {
+	display: flex;
+	gap: var(--size-4-4);
+	align-items: stretch;
+	min-height: 60vh;
+}
+
+.mx-export-preview {
+	flex: 1 1 auto;
+	display: flex;
+	min-width: 0;
+}
+
+.mx-export-controls {
+	flex: 0 0 280px;
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-2);
+	overflow-y: auto;
+}
+
+.mx-export-status {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	min-height: 1.5em;
+}
+
+.mx-export-actions {
+	display: flex;
+	gap: var(--size-4-2);
+	justify-content: flex-end;
+	margin-top: var(--size-4-3);
+}
+
+.mx-progress-list {
+	max-height: 220px;
+	overflow-y: auto;
+	font-size: var(--font-ui-smaller);
+	font-family: var(--font-monospace);
+	color: var(--text-muted);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	padding: var(--size-4-2);
+}
+
+.mx-report-entry {
+	display: block;
+	padding: 2px 0;
+}
+
+.mx-report-entry.mx-severity-warning {
+	color: var(--text-warning);
+}
+
+.mx-report-entry.mx-severity-error {
+	color: var(--text-error);
+}
+
+/* --- settings --------------------------------------------------------------------- */
+
+.mx-profile-editor {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	padding: var(--size-4-3);
+	margin-bottom: var(--size-4-4);
+}
+
+.mx-profile-editor .setting-item {
+	border-top: none;
+	padding-top: var(--size-4-2);
+	padding-bottom: var(--size-4-2);
+}
+
+.mx-stylesheet-input {
+	width: 100%;
+	min-height: 180px;
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-smaller);
+	resize: vertical;
+}
+
+.mx-folder-map-row {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+	padding: var(--size-4-1) 0;
+}
+
+.mx-folder-map-path {
+	flex: 1 1 auto;
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-smaller);
+	overflow-wrap: anywhere;
+}
+
+.mx-hint {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	margin: var(--size-4-1) 0 var(--size-4-3);
+}
