@@ -1,7 +1,7 @@
 {
 	"id": "multi-exporter",
 	"name": "Multi Exporter",
-	"version": "1.0.14",
+	"version": "1.0.15",
 	"minAppVersion": "1.7.2",
 	"description": "Export notes to PDF with CSS Paged Media. The live preview is the paginated output, so it cannot drift from the file you get.",
 	"author": "Josh Glazer",

@@ -11,7 +11,7 @@ import type {
 	RenderedDocument,
 } from '../core/backend';
 import { planPerNoteNumbering } from '../core/page-numbering';
-import type { NumberingReset } from '../core/page-numbering';
+import type { PageStamp } from '../core/page-numbering';
 import { PAGEDJS_BACKEND_ID } from '../core/profiles';
 import type { PageNumbering } from '../core/types';
 
@@ -313,10 +313,9 @@ export class PagedJsWebviewBackend implements ExportBackend {
 	): Promise<void> {
 		if (numbering !== 'per-note') return;
 		const documentStartPages = startPages ?? (await webview.run<number[]>(DOCUMENT_START_PAGES_SCRIPT));
-		const resets = planPerNoteNumbering(documentStartPages, pageCount);
-		// One reset covering the whole document is what continuous numbering already does.
-		if (resets.length <= 1) return;
-		await webview.run<boolean>(numberingScript(resets));
+		const stamps = planPerNoteNumbering(documentStartPages, pageCount);
+		if (stamps.length === 0) return;
+		await webview.run<boolean>(numberingScript(stamps));
 	}
 
 	private async ensurePolyfill(webview: PreviewWebview): Promise<void> {
@@ -519,27 +518,25 @@ const FIT_PREVIEW_SCRIPT = `(() => {
 })()`;
 
 /**
- * Apply the counter restarts to the paginated pages.
+ * Write each page's numbering onto the page itself.
  *
- * `counter-reset` on a page element creates a **new counter scoped to that element and its
- * following siblings**, which is what makes this work at all: one declaration on a note's
- * first page silently re-bases `page` and `pages` for that note's whole run, and the next
- * note's declaration re-bases them again. Every margin box downstream keeps reading plain
- * `counter(page)` / `counter(pages)` and gets note-local values.
- *
- * `page 0` rather than `page 1`: paged.js already puts `counter-increment: page 1` on every
- * page element, and on one element a reset is applied before an increment — so the note's
- * first page lands on 1.
+ * Every page gets an explicit value for both counters and `counter-increment: none`, so what a
+ * page reads is a fact about that page and not a consequence of the ones before it. Leaning on
+ * counter *scope* instead — one reset per note, carried across the pages that follow — was
+ * tried and produced correct restart pages separated by nonsense; `core/page-numbering.ts`
+ * records the measurements.
  *
  * Set inline rather than through a stylesheet so nothing has to be cleaned up between runs:
  * every pagination rebuilds the page elements from scratch.
  */
-function numberingScript(resets: readonly NumberingReset[]): string {
+function numberingScript(stamps: readonly PageStamp[]): string {
 	return `(() => {
 	const pages = Array.from(document.querySelectorAll('.pagedjs_page'));
-	for (const reset of ${JSON.stringify(resets)}) {
-		const page = pages[reset.pageIndex];
-		if (page) page.style.counterReset = 'page 0 pages ' + reset.total;
+	for (const stamp of ${JSON.stringify(stamps)}) {
+		const page = pages[stamp.pageIndex];
+		if (!page) continue;
+		page.style.counterReset = 'page ' + stamp.number + ' pages ' + stamp.total;
+		page.style.counterIncrement = 'none';
 	}
 	return true;
 })()`;

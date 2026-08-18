@@ -51,8 +51,12 @@ mjx-container svg { max-width: 100%; height: auto; }
 /* Running-head source. The wrapper carries the note name and the export timestamp so a
    margin box can name them; it takes no space and prints nothing itself. Sized to zero
    rather than display:none — paged.js only sets a named string from an element it actually
-   lays out onto a page, and a collapsed element is never laid out. */
-.mx-doc-meta { height: 0; overflow: hidden; margin: 0; padding: 0; font-size: 0; line-height: 0; color: transparent; }
+   lays out onto a page, and a collapsed element is never laid out.
+
+   break-after: avoid because a zero-height block fits anywhere, including the last sliver of
+   the previous note's final page. Orphaned there it names the wrong page as the note's first,
+   which misplaces the running head and puts the PDF bookmark on the page before the note. */
+.mx-doc-meta { height: 0; overflow: hidden; margin: 0; padding: 0; font-size: 0; line-height: 0; color: transparent; break-after: avoid; }
 .mx-doc-title { string-set: doctitle content(text); }
 .mx-doc-date { string-set: docdate content(text); }
 

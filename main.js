@@ -4390,8 +4390,12 @@ mjx-container svg { max-width: 100%; height: auto; }
 /* Running-head source. The wrapper carries the note name and the export timestamp so a
    margin box can name them; it takes no space and prints nothing itself. Sized to zero
    rather than display:none \u2014 paged.js only sets a named string from an element it actually
-   lays out onto a page, and a collapsed element is never laid out. */
-.mx-doc-meta { height: 0; overflow: hidden; margin: 0; padding: 0; font-size: 0; line-height: 0; color: transparent; }
+   lays out onto a page, and a collapsed element is never laid out.
+
+   break-after: avoid because a zero-height block fits anywhere, including the last sliver of
+   the previous note's final page. Orphaned there it names the wrong page as the note's first,
+   which misplaces the running head and puts the PDF bookmark on the page before the note. */
+.mx-doc-meta { height: 0; overflow: hidden; margin: 0; padding: 0; font-size: 0; line-height: 0; color: transparent; break-after: avoid; }
 .mx-doc-title { string-set: doctitle content(text); }
 .mx-doc-date { string-set: docdate content(text); }
 
@@ -4563,10 +4567,15 @@ function createDefaultProfiles() {
         // a margin box can name the note it belongs to — and the only one that stays
         // right in a merged export, where the answer changes partway down the PDF.
         furniture: {
-          topLeft: { content: "string(doctitle)" },
+          // `start`, not the bare form: bare `string()` resolves to the *first* value on
+          // the page, so a page where one note ends and the next begins would be headed
+          // with the note you have not started reading yet. `start` takes the value in
+          // force at the top of the page, falling back to the previous page's — which is
+          // what a running head means.
+          topLeft: { content: "string(doctitle, start)" },
           topRight: { content: cssString(DEFAULT_AUTHOR) },
           bottomLeft: { content: 'counter(page) " of " counter(pages)' },
-          bottomRight: { content: "string(docdate)" }
+          bottomRight: { content: "string(docdate, start)" }
         }
       },
       flags: { ...defaultFlags(), inlineImages: true }
@@ -38850,6 +38859,7 @@ var paged_polyfill_default = `/**
 
 // src/core/page-numbering.ts
 function planPerNoteNumbering(documentStartPages, pageCount) {
+  var _a;
   if (pageCount <= 0) return [];
   const starts = [];
   for (const start of documentStartPages) {
@@ -38858,13 +38868,16 @@ function planPerNoteNumbering(documentStartPages, pageCount) {
     starts.push(start);
   }
   if (starts.length === 0 || starts[0] !== 0) starts.unshift(0);
-  return starts.map((start, index) => {
-    var _a;
-    return {
-      pageIndex: start,
-      total: ((_a = starts[index + 1]) != null ? _a : pageCount) - start
-    };
-  });
+  if (starts.length <= 1) return [];
+  const stamps = [];
+  for (let run2 = 0; run2 < starts.length; run2++) {
+    const start = starts[run2];
+    const end = (_a = starts[run2 + 1]) != null ? _a : pageCount;
+    for (let pageIndex = start; pageIndex < end; pageIndex++) {
+      stamps.push({ pageIndex, number: pageIndex - start + 1, total: end - start });
+    }
+  }
+  return stamps;
 }
 
 // src/shell/pagedjs-backend.ts
@@ -39071,9 +39084,9 @@ var PagedJsWebviewBackend = class {
   async applyNumbering(webview, numbering, pageCount, startPages) {
     if (numbering !== "per-note") return;
     const documentStartPages = startPages != null ? startPages : await webview.run(DOCUMENT_START_PAGES_SCRIPT);
-    const resets = planPerNoteNumbering(documentStartPages, pageCount);
-    if (resets.length <= 1) return;
-    await webview.run(numberingScript(resets));
+    const stamps = planPerNoteNumbering(documentStartPages, pageCount);
+    if (stamps.length === 0) return;
+    await webview.run(numberingScript(stamps));
   }
   async ensurePolyfill(webview) {
     const ready = await webview.run(`Boolean(window.${READY_FLAG})`);
@@ -39233,12 +39246,14 @@ var FIT_PREVIEW_SCRIPT = `(() => {
 	}
 	return true;
 })()`;
-function numberingScript(resets) {
+function numberingScript(stamps) {
   return `(() => {
 	const pages = Array.from(document.querySelectorAll('.pagedjs_page'));
-	for (const reset of ${JSON.stringify(resets)}) {
-		const page = pages[reset.pageIndex];
-		if (page) page.style.counterReset = 'page 0 pages ' + reset.total;
+	for (const stamp of ${JSON.stringify(stamps)}) {
+		const page = pages[stamp.pageIndex];
+		if (!page) continue;
+		page.style.counterReset = 'page ' + stamp.number + ' pages ' + stamp.total;
+		page.style.counterIncrement = 'none';
 	}
 	return true;
 })()`;

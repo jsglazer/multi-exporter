@@ -118,10 +118,15 @@ export function createDefaultProfiles(): Profile[] {
 				// a margin box can name the note it belongs to — and the only one that stays
 				// right in a merged export, where the answer changes partway down the PDF.
 				furniture: {
-					topLeft: { content: 'string(doctitle)' },
+					// `start`, not the bare form: bare `string()` resolves to the *first* value on
+					// the page, so a page where one note ends and the next begins would be headed
+					// with the note you have not started reading yet. `start` takes the value in
+					// force at the top of the page, falling back to the previous page's — which is
+					// what a running head means.
+					topLeft: { content: 'string(doctitle, start)' },
 					topRight: { content: cssString(DEFAULT_AUTHOR) },
 					bottomLeft: { content: 'counter(page) " of " counter(pages)' },
-					bottomRight: { content: 'string(docdate)' },
+					bottomRight: { content: 'string(docdate, start)' },
 				},
 			},
 			flags: { ...defaultFlags(), inlineImages: true },

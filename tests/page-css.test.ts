@@ -154,6 +154,14 @@ describe('document meta strings', () => {
 		expect(rule).not.toContain('display: none');
 	});
 
+	// A zero-height block fits anywhere, including the last sliver of the previous note's final
+	// page. Orphaned there it names the wrong page as the note's first, which misplaces the
+	// running head and puts the PDF bookmark on the page before the note starts.
+	it('keeps the meta block with the note it belongs to', () => {
+		const rule = /\.mx-doc-meta \{([^}]*)\}/.exec(BASE_DOCUMENT_CSS)?.[1] ?? '';
+		expect(rule).toContain('break-after: avoid');
+	});
+
 	it('cancels a leading page break for the first document only', () => {
 		expect(BASE_DOCUMENT_CSS).toContain('.mx-document-first > .mx-doc-meta + * { break-before: auto; }');
 	});
@@ -168,10 +176,12 @@ describe('the Article profile furniture', () => {
 
 	it('names the note, the author, the page count and the timestamp', () => {
 		const css = buildPageCss((article as NonNullable<typeof article>).page);
-		expect(css).toContain('@top-left { content: string(doctitle); }');
+		// `start`, not the bare form: bare `string()` is the *first* value on the page, which
+		// heads a page with the note that begins on it rather than the one being read.
+		expect(css).toContain('@top-left { content: string(doctitle, start); }');
 		expect(css).toContain('@top-right { content: "Joshua S. Glazer"; }');
 		expect(css).toContain('@bottom-left { content: counter(page) " of " counter(pages); }');
-		expect(css).toContain('@bottom-right { content: string(docdate); }');
+		expect(css).toContain('@bottom-right { content: string(docdate, start); }');
 	});
 
 	// The 0.4pt head and foot rules from the fancyhdr block this profile was modelled on.

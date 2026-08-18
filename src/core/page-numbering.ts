@@ -2,49 +2,54 @@
  * Where page numbering restarts in a merged document.
  *
  * A merged export paginates every note as one document — that is what makes the preview the
- * output and lets running heads carry across note boundaries — so `counter(page)` runs
- * 1…N across the whole PDF and `counter(pages)` is the whole PDF's total. Restarting the
- * count at each note is therefore not something a stylesheet can ask for: CSS Paged Media
- * has no per-section total at all, and paged.js sets `pages` once, from the chunker's final
- * page count.
+ * output and lets running heads carry across note boundaries — so `counter(page)` runs 1…N
+ * across the whole PDF and `counter(pages)` is the whole PDF's total. Restarting the count at
+ * each note is therefore not something a stylesheet can ask for: CSS Paged Media has no
+ * per-section total at all, and paged.js sets `pages` once, from the chunker's final page
+ * count.
  *
- * What it *can* be is a counter scope. A `counter-reset` on a page element creates a new
- * counter scoped to that element and its following siblings, shadowing the one the page
- * container established. Dropping one reset on the first page of each note therefore
- * restarts both `page` and `pages` for exactly that note's run of pages, and every margin
- * box downstream reads the note-local values without knowing anything has changed.
+ * ## Why every page is stamped, not just the ones that restart
  *
- * This module decides *where* those resets go and *what* they say. It is pure so the
- * decision can be tested without a paginator; the shell only applies the result.
+ * The obvious implementation is one `counter-reset` per note, leaning on counter *scope* to
+ * carry the new value across the pages that follow. It does not work. Measured against real
+ * output: a `counter-reset` on a page element creates a counter scoped to that element and its
+ * descendants, and the following sibling pages do **not** see it — they fall back to the
+ * document-wide counter, which is itself only incremented on the pages that did not reset. A
+ * fourteen-page merge came out reading `1 of 1`, `1 of 3`, `1 of 14`, `2 of 14`, `1 of 1`,
+ * `1 of 2`, `3 of 14` — every restart page correct, every page between them nonsense.
+ *
+ * So nothing is left to scope. Every page carries its own explicit `counter-reset` for both
+ * counters and `counter-increment: none`, which makes each page's numbering a fact about that
+ * page alone rather than a consequence of the ones before it.
  */
 
-/** One counter restart: which page it lands on, and the total that page's note spans. */
-export interface NumberingReset {
-	/** Index of the page the reset is applied to, in the full paginated document. */
+/** The numbering for a single page: what it should read, and out of how many. */
+export interface PageStamp {
+	/** Index of the page in the full paginated document. */
 	pageIndex: number;
-	/** Pages the note starting here spans — the `of N` half of a running foot. */
+	/** The number this page should display. */
+	number: number;
+	/** Pages in the run this page belongs to — the `of N` half of a running foot. */
 	total: number;
 }
 
 /**
- * Plan the per-note counter restarts for a merged document.
+ * Plan per-note numbering for a merged document, one entry per page.
  *
- * `documentStartPages` is what the backend already reads back out of the paginated DOM: the
- * first page index of each note, in document order, non-decreasing.
+ * `documentStartPages` is what the backend reads back out of the paginated DOM: the first page
+ * index of each note, in document order, non-decreasing.
  *
- * **Notes that share a page share a count.** Two short notes can land on the same page, and
- * numbering cannot restart in the middle of one — so only the first note at a given start
- * page gets a reset, and its total covers every page up to the next *distinct* start. That
- * is the honest answer rather than a `1 of 0` for the note that did not get its own page.
+ * **Notes that share a page share a run.** Two short notes can land on the same page, and
+ * numbering cannot restart in the middle of one — so a run begins at each *distinct* start page
+ * and covers every page up to the next. That beats a `1 of 0` for the note that never got a
+ * page of its own.
+ *
+ * Returns an empty array when there is nothing to change: no pages, or a single run covering
+ * the whole document, which is what continuous numbering already produces.
  */
-export function planPerNoteNumbering(
-	documentStartPages: readonly number[],
-	pageCount: number,
-): NumberingReset[] {
+export function planPerNoteNumbering(documentStartPages: readonly number[], pageCount: number): PageStamp[] {
 	if (pageCount <= 0) return [];
 
-	// Distinct starts, in order, clamped into the document. A start beyond the last page
-	// cannot begin a run of pages, so it cannot carry a reset.
 	const starts: number[] = [];
 	for (const start of documentStartPages) {
 		if (!Number.isInteger(start) || start < 0 || start >= pageCount) continue;
@@ -56,8 +61,17 @@ export function planPerNoteNumbering(
 	// recorded start was missing or out of range.
 	if (starts.length === 0 || starts[0] !== 0) starts.unshift(0);
 
-	return starts.map((start, index) => ({
-		pageIndex: start,
-		total: (starts[index + 1] ?? pageCount) - start,
-	}));
+	// One run is exactly what continuous numbering already does; stamping it would be work
+	// with no effect, and the caller skips the guest round trip entirely.
+	if (starts.length <= 1) return [];
+
+	const stamps: PageStamp[] = [];
+	for (let run = 0; run < starts.length; run++) {
+		const start = starts[run] as number;
+		const end = starts[run + 1] ?? pageCount;
+		for (let pageIndex = start; pageIndex < end; pageIndex++) {
+			stamps.push({ pageIndex, number: pageIndex - start + 1, total: end - start });
+		}
+	}
+	return stamps;
 }
