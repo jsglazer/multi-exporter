@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	createDefaultProfiles,
 	createDefaultSettings,
+	migrateCrashingIndentRule,
 	migrateLegacyMetricProfiles,
 	normalizeSettings,
 	SETTINGS_VERSION,
@@ -127,5 +128,67 @@ describe('a page field the saved settings predate', () => {
 			profiles: [{ ...createDefaultProfiles()[0], page: { ...createDefaultProfiles()[0]?.page, keepHeadingsWithText: false } }],
 		});
 		expect(settings.profiles[0]?.page.keepHeadingsWithText).toBe(false);
+	});
+});
+
+/**
+ * A selector list holding both a `*-of-type` pseudo and a `+` combinator is removed twice by
+ * paged.js — once by its `NthOfType` rule handler, once by its `Following` one — and csstree
+ * throws `item doesn't belong to list` out of the polisher before layout begins. The
+ * Manuscript profile shipped exactly such a rule, and a profile stylesheet is persisted the
+ * moment settings are saved, so fixing the shipped default rescues new vaults only.
+ */
+describe('migrateCrashingIndentRule', () => {
+	const CRASHING = 'p:first-of-type, h1 + p, h2 + p { text-indent: 0; }';
+
+	function saved(stylesheet: string): Profile {
+		return { ...(createDefaultProfiles()[0] as Profile), stylesheet };
+	}
+
+	it('splits the rule the plugin itself handed out', () => {
+		const [migrated] = migrateCrashingIndentRule([saved(`p { text-indent: 1.5em; }\n${CRASHING}\nh2 { font-size: 12pt; }`)]);
+		expect(migrated?.stylesheet).not.toContain(CRASHING);
+		expect(migrated?.stylesheet).toContain('p:first-of-type { text-indent: 0; }');
+		expect(migrated?.stylesheet).toContain('h1 + p, h2 + p { text-indent: 0; }');
+	});
+
+	it('keeps every other line of the stylesheet untouched', () => {
+		const [migrated] = migrateCrashingIndentRule([saved(`h1 { break-before: page; }\n${CRASHING}`)]);
+		expect(migrated?.stylesheet.startsWith('h1 { break-before: page; }\n')).toBe(true);
+	});
+
+	it('leaves a stylesheet that never carried the rule alone', () => {
+		const original = saved('body { font-size: 11pt; }');
+		expect(migrateCrashingIndentRule([original])[0]).toBe(original);
+	});
+
+	it('does not touch a rule the user rewrote, even into something equivalent', () => {
+		const edited = saved('p:first-of-type, h1 + p { text-indent: 0; }');
+		expect(migrateCrashingIndentRule([edited])[0]?.stylesheet).toBe('p:first-of-type, h1 + p { text-indent: 0; }');
+	});
+
+	it('runs on load for settings saved before schema version 2', () => {
+		const settings = normalizeSettings({ settingsVersion: 1, profiles: [saved(CRASHING)] });
+		expect(settings.profiles[0]?.stylesheet).not.toContain(CRASHING);
+		expect(settings.settingsVersion).toBe(SETTINGS_VERSION);
+	});
+
+	it('is not re-run on settings already at the current version', () => {
+		const settings = normalizeSettings({ settingsVersion: SETTINGS_VERSION, profiles: [saved(CRASHING)] });
+		expect(settings.profiles[0]?.stylesheet).toBe(CRASHING);
+	});
+});
+
+/** The shipped stylesheets must not reintroduce the crash the migration exists to undo. */
+describe('shipped profile stylesheets', () => {
+	it('never put a *-of-type pseudo and a + combinator in one selector list', () => {
+		for (const profile of createDefaultProfiles()) {
+			for (const rule of profile.stylesheet.split('}')) {
+				const selector = rule.split('{')[0] ?? '';
+				if (!selector.includes(',')) continue;
+				const bothKinds = /:(?:first|last|nth)-of-type/.test(selector) && selector.includes('+');
+				expect(bothKinds, `${profile.name}: ${selector.trim()}`).toBe(false);
+			}
+		}
 	});
 });

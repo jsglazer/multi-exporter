@@ -30778,6 +30778,22 @@
 		}
 	}
 
+	/**
+	 * multi-exporter patch: removing a rule the other handler already removed is a no-op.
+	 *
+	 * `NthOfType.onRule` and `Following.onRule` both drop the rule they rewrite. A selector list
+	 * that mixes the two — `p:first-of-type, h1 + p { ... }`, which is ordinary CSS and is what
+	 * the Manuscript profile ships — matches both, so the second handler removes an item csstree
+	 * has already unlinked and `List.remove` throws "item doesn't belong to list" out of the
+	 * polisher. That kills pagination before a single page exists, and Electron re-raises it
+	 * wrapped in GUEST_VIEW_MANAGER_CALL, where it reads like a dead renderer rather than a
+	 * stylesheet. An item that is neither linked nor the head is not in the list; skip it.
+	 */
+	function mxRemoveRuleOnce(rulelist, ruleItem) {
+		if (ruleItem.prev === null && ruleItem.next === null && rulelist.head !== ruleItem) return;
+		rulelist.remove(ruleItem);
+	}
+
 	class NthOfType extends Handler {
 		constructor(chunker, polisher, caller) {
 			super(chunker, polisher, caller);
@@ -30803,7 +30819,7 @@
 					}
 				});
 
-				rulelist.remove(ruleItem);
+				mxRemoveRuleOnce(rulelist, ruleItem);
 			}
 		}
 
@@ -30858,7 +30874,7 @@
 					}
 				});
 
-				rulelist.remove(ruleItem);
+				mxRemoveRuleOnce(rulelist, ruleItem);
 			}
 		}
 

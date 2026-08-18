@@ -117,15 +117,20 @@ export class PagedJsWebviewBackend implements ExportBackend {
 	 *
 	 * A `<webview>`'s guest is a separate renderer process and it can go away underneath a
 	 * call in flight — it is destroyed while a script is running, or it crashes outright.
-	 * Every later call then rejects with Electron's `GUEST_VIEW_MANAGER_CALL ... item doesn't
-	 * belong to list`, which is a sentence about Electron's bookkeeping and tells the user
-	 * nothing: the preview simply reports a failure that a fresh webview would not have had,
-	 * and stays broken until the modal is closed and reopened. Rebuilding is cheap — the
-	 * polyfill is re-injected on demand — so the transient case heals itself.
+	 * Every later call then rejects with a message about a disposed frame or a destroyed
+	 * WebContents: the preview reports a failure a fresh webview would not have had, and stays
+	 * broken until the modal is closed and reopened. Rebuilding is cheap — the polyfill is
+	 * re-injected on demand — so the transient case heals itself.
 	 *
 	 * A second failure of the same kind is *not* transient: the content itself is killing the
-	 * renderer, and no third attempt will change that. It is re-thrown as something a user can
-	 * act on rather than as Electron's list-membership complaint.
+	 * renderer, and no third attempt will change that.
+	 *
+	 * What must **not** reach here is an ordinary exception thrown by the injected script.
+	 * Electron wraps those in the same `GUEST_VIEW_MANAGER_CALL` framing as a dead guest, and
+	 * treating the framing as the signal made every paged.js error look like a crashed process:
+	 * a healthy webview was destroyed, the work re-run, the identical error hit again, and the
+	 * user told the process had died twice. `isGuestGoneError` matches the death itself now,
+	 * never the wrapper.
 	 */
 	private async withGuestRecovery<T>(subject: string, action: () => Promise<T>): Promise<T> {
 		try {
@@ -142,9 +147,9 @@ export class PagedJsWebviewBackend implements ExportBackend {
 				// Error constructor is not declared, so the original message is carried in the text
 				// instead of being dropped.
 				throw new Error(
-					`The preview process stopped while paginating ${subject}, twice. That usually means a ` +
-						'stylesheet the paginator cannot resolve — check the developer console for the paged.js ' +
-						"error, and try the profile's stylesheet without its @page or break rules. " +
+					`The preview's renderer process died while paginating ${subject}, twice — a fresh one did not ` +
+						'survive either, so the content itself is what is killing it. A very large image or an ' +
+						'enormous note is the usual cause; try the export again with that note excluded. ' +
 						`(Electron said: ${retryError instanceof Error ? retryError.message : String(retryError)})`,
 				);
 			}
@@ -291,7 +296,35 @@ export class PagedJsWebviewBackend implements ExportBackend {
 			}
 		}
 
-		await run;
+		try {
+			await run;
+		} catch (error) {
+			throw await this.describePaginationFailure(webview, error);
+		}
+	}
+
+	/**
+	 * Say that the *paginator* threw, and where it was when it did.
+	 *
+	 * paged.js's errors are written for someone reading its source: csstree's `item doesn't
+	 * belong to list`, thrown out of the polisher by a stylesheet whose selector list trips two
+	 * rule handlers at once, is a true sentence about a linked list and tells the user nothing
+	 * about their profile. The stage marker is what turns it into a location — a throw at
+	 * `preview-called` with no pages is the stylesheet, one at `laying-out-page` is the content.
+	 */
+	private async describePaginationFailure(webview: PreviewWebview, error: unknown): Promise<Error> {
+		if (this.disposed || isGuestGoneError(error)) return error instanceof Error ? error : new Error(String(error));
+		const message = error instanceof Error ? error.message : String(error);
+		const where = await webview.run<StallSnapshot | null>(STALL_SNAPSHOT_SCRIPT).catch(() => null);
+		console.error('[multi-exporter] paged.js threw during pagination; last known state:', where, error);
+
+		const stage = where?.stage === null || where?.stage === undefined ? '' : ` It was at “${where.stage}”.`;
+		const blame =
+			where === null || where.pageCount === 0
+				? ' No page had been laid out yet, so the profile’s stylesheet is the cause rather than the note —' +
+					' check its @page, break and selector rules.'
+				: ` It had laid out ${where.pageCount} page${where.pageCount === 1 ? '' : 's'}.`;
+		return new Error(`The paginator (paged.js) failed: ${message}.${stage}${blame}`);
 	}
 
 	/**

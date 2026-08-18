@@ -4551,7 +4551,13 @@ body { font-family: "Times New Roman", Times, serif; font-size: 12pt; line-heigh
 h1 { break-before: page; string-set: chapter content(text); font-size: 14pt; }
 h2 { font-size: 12pt; }
 p { text-indent: 1.5em; margin: 0; }
-p:first-of-type, h1 + p, h2 + p { text-indent: 0; }
+/* Split deliberately, and it must stay split. paged.js gives *-of-type selectors and sibling
+   combinators a rule handler each, and both handlers delete the rule they rewrite \u2014 so one
+   selector list holding both kinds is removed twice and csstree throws "item doesn't belong to
+   list" out of the polisher, before a single page exists. The vendored polyfill is patched to
+   survive that, but the two lines cost nothing and do not depend on the patch. */
+p:first-of-type { text-indent: 0; }
+h1 + p, h2 + p { text-indent: 0; }
 .mx-bibliography { break-before: page; line-height: 1.5; }
 .mx-bibliography > div { text-indent: -2em; padding-left: 2em; margin-bottom: 0.5em; }
 .mx-endnotes { break-before: page; line-height: 1.5; }
@@ -4628,7 +4634,7 @@ function createDefaultProfiles() {
     }
   ];
 }
-var SETTINGS_VERSION = 1;
+var SETTINGS_VERSION = 2;
 var LEGACY_METRIC_PAGES = [
   {
     legacy: { top: "20mm", right: "18mm", bottom: "20mm", left: "18mm" },
@@ -4659,6 +4665,13 @@ function migrateLegacyMetricProfiles(profiles) {
       }
     };
   });
+}
+var LEGACY_INDENT_RULE = "p:first-of-type, h1 + p, h2 + p { text-indent: 0; }";
+var SPLIT_INDENT_RULE = "p:first-of-type { text-indent: 0; }\nh1 + p, h2 + p { text-indent: 0; }";
+function migrateCrashingIndentRule(profiles) {
+  return profiles.map(
+    (profile) => profile.stylesheet.includes(LEGACY_INDENT_RULE) ? { ...profile, stylesheet: profile.stylesheet.replace(LEGACY_INDENT_RULE, SPLIT_INDENT_RULE) } : profile
+  );
 }
 function createDefaultSettings() {
   var _a, _b;
@@ -4709,7 +4722,8 @@ function normalizeSettings(loaded) {
   const raw = loaded;
   const loadedVersion = typeof raw.settingsVersion === "number" ? raw.settingsVersion : 0;
   const normalized = Array.isArray(raw.profiles) && raw.profiles.length > 0 ? raw.profiles.map(normalizeProfile) : defaults.profiles;
-  const profiles = loadedVersion < 1 ? migrateLegacyMetricProfiles(normalized) : normalized;
+  const metric = loadedVersion < 1 ? migrateLegacyMetricProfiles(normalized) : normalized;
+  const profiles = loadedVersion < 2 ? migrateCrashingIndentRule(metric) : metric;
   const ids = new Set(profiles.map((profile) => profile.id));
   const defaultProfileId = typeof raw.defaultProfileId === "string" && ids.has(raw.defaultProfileId) ? raw.defaultProfileId : (_b = (_a = profiles[0]) == null ? void 0 : _a.id) != null ? _b : defaults.defaultProfileId;
   const folderProfiles = {};
@@ -4871,14 +4885,29 @@ async function retryWhileUnready(attempt, destroyed) {
     }
   }
 }
+async function unwrapped(attempt) {
+  try {
+    return await attempt();
+  } catch (error2) {
+    if (!(error2 instanceof Error)) throw error2;
+    const message = unwrapGuestError(error2.message);
+    if (message === error2.message) throw error2;
+    const rethrown = new Error(message);
+    if (error2.stack !== void 0) rethrown.stack = error2.stack;
+    throw rethrown;
+  }
+}
 function isUnreadyError(error2) {
   return error2 instanceof Error && /must be attached to the DOM|dom-ready/i.test(error2.message);
 }
+var GUEST_CALL_WRAPPER = /^Error invoking remote method '[^']*':\s*(?:\w*Error:\s*)?/;
+function unwrapGuestError(message) {
+  return message.replace(GUEST_CALL_WRAPPER, "");
+}
+var GUEST_GONE = /render frame was disposed|WebContents was destroyed|Object has been destroyed|closed or released|missing guest page|Invalid guestInstanceId|guest instance is not attached/i;
 function isGuestGoneError(error2) {
   if (!(error2 instanceof Error)) return false;
-  return /GUEST_VIEW_MANAGER_CALL|item doesn't belong to list|render frame was disposed|WebContents was destroyed|Object has been destroyed/i.test(
-    error2.message
-  );
+  return GUEST_GONE.test(error2.message);
 }
 var RETRY_INTERVAL_MS = 150;
 var READY_TIMEOUT_MS = 15e3;
@@ -4923,12 +4952,14 @@ function createPreviewWebview(parent, partition) {
     async run(code) {
       if (destroyed) throw new Error("The preview webview has been destroyed.");
       await ready();
-      return await retryWhileUnready(() => element.executeJavaScript(code), () => destroyed);
+      return await unwrapped(
+        () => retryWhileUnready(() => element.executeJavaScript(code), () => destroyed)
+      );
     },
     async printToPdf(options) {
       if (destroyed) throw new Error("The preview webview has been destroyed.");
       await ready();
-      return await retryWhileUnready(() => element.printToPDF(options), () => destroyed);
+      return await unwrapped(() => retryWhileUnready(() => element.printToPDF(options), () => destroyed));
     },
     setOffscreen(offscreen) {
       element.toggleClass(PREVIEW_OFFSCREEN_CLASS, offscreen);
@@ -36389,6 +36420,22 @@ var paged_polyfill_default = `/**
 		}
 	}
 
+	/**
+	 * multi-exporter patch: removing a rule the other handler already removed is a no-op.
+	 *
+	 * \`NthOfType.onRule\` and \`Following.onRule\` both drop the rule they rewrite. A selector list
+	 * that mixes the two \u2014 \`p:first-of-type, h1 + p { ... }\`, which is ordinary CSS and is what
+	 * the Manuscript profile ships \u2014 matches both, so the second handler removes an item csstree
+	 * has already unlinked and \`List.remove\` throws "item doesn't belong to list" out of the
+	 * polisher. That kills pagination before a single page exists, and Electron re-raises it
+	 * wrapped in GUEST_VIEW_MANAGER_CALL, where it reads like a dead renderer rather than a
+	 * stylesheet. An item that is neither linked nor the head is not in the list; skip it.
+	 */
+	function mxRemoveRuleOnce(rulelist, ruleItem) {
+		if (ruleItem.prev === null && ruleItem.next === null && rulelist.head !== ruleItem) return;
+		rulelist.remove(ruleItem);
+	}
+
 	class NthOfType extends Handler {
 		constructor(chunker, polisher, caller) {
 			super(chunker, polisher, caller);
@@ -36414,7 +36461,7 @@ var paged_polyfill_default = `/**
 					}
 				});
 
-				rulelist.remove(ruleItem);
+				mxRemoveRuleOnce(rulelist, ruleItem);
 			}
 		}
 
@@ -36469,7 +36516,7 @@ var paged_polyfill_default = `/**
 					}
 				});
 
-				rulelist.remove(ruleItem);
+				mxRemoveRuleOnce(rulelist, ruleItem);
 			}
 		}
 
@@ -38947,15 +38994,20 @@ var PagedJsWebviewBackend = class {
    *
    * A `<webview>`'s guest is a separate renderer process and it can go away underneath a
    * call in flight — it is destroyed while a script is running, or it crashes outright.
-   * Every later call then rejects with Electron's `GUEST_VIEW_MANAGER_CALL ... item doesn't
-   * belong to list`, which is a sentence about Electron's bookkeeping and tells the user
-   * nothing: the preview simply reports a failure that a fresh webview would not have had,
-   * and stays broken until the modal is closed and reopened. Rebuilding is cheap — the
-   * polyfill is re-injected on demand — so the transient case heals itself.
+   * Every later call then rejects with a message about a disposed frame or a destroyed
+   * WebContents: the preview reports a failure a fresh webview would not have had, and stays
+   * broken until the modal is closed and reopened. Rebuilding is cheap — the polyfill is
+   * re-injected on demand — so the transient case heals itself.
    *
    * A second failure of the same kind is *not* transient: the content itself is killing the
-   * renderer, and no third attempt will change that. It is re-thrown as something a user can
-   * act on rather than as Electron's list-membership complaint.
+   * renderer, and no third attempt will change that.
+   *
+   * What must **not** reach here is an ordinary exception thrown by the injected script.
+   * Electron wraps those in the same `GUEST_VIEW_MANAGER_CALL` framing as a dead guest, and
+   * treating the framing as the signal made every paged.js error look like a crashed process:
+   * a healthy webview was destroyed, the work re-run, the identical error hit again, and the
+   * user told the process had died twice. `isGuestGoneError` matches the death itself now,
+   * never the wrapper.
    */
   async withGuestRecovery(subject, action) {
     try {
@@ -38969,7 +39021,7 @@ var PagedJsWebviewBackend = class {
       } catch (retryError) {
         if (!isGuestGoneError(retryError)) throw retryError;
         throw new Error(
-          `The preview process stopped while paginating ${subject}, twice. That usually means a stylesheet the paginator cannot resolve \u2014 check the developer console for the paged.js error, and try the profile's stylesheet without its @page or break rules. (Electron said: ${retryError instanceof Error ? retryError.message : String(retryError)})`
+          `The preview's renderer process died while paginating ${subject}, twice \u2014 a fresh one did not survive either, so the content itself is what is killing it. A very large image or an enormous note is the usual cause; try the export again with that note excluded. (Electron said: ${retryError instanceof Error ? retryError.message : String(retryError)})`
         );
       }
     }
@@ -39075,7 +39127,29 @@ var PagedJsWebviewBackend = class {
         );
       }
     }
-    await run2;
+    try {
+      await run2;
+    } catch (error2) {
+      throw await this.describePaginationFailure(webview, error2);
+    }
+  }
+  /**
+   * Say that the *paginator* threw, and where it was when it did.
+   *
+   * paged.js's errors are written for someone reading its source: csstree's `item doesn't
+   * belong to list`, thrown out of the polisher by a stylesheet whose selector list trips two
+   * rule handlers at once, is a true sentence about a linked list and tells the user nothing
+   * about their profile. The stage marker is what turns it into a location — a throw at
+   * `preview-called` with no pages is the stylesheet, one at `laying-out-page` is the content.
+   */
+  async describePaginationFailure(webview, error2) {
+    if (this.disposed || isGuestGoneError(error2)) return error2 instanceof Error ? error2 : new Error(String(error2));
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    const where = await webview.run(STALL_SNAPSHOT_SCRIPT).catch(() => null);
+    console.error("[multi-exporter] paged.js threw during pagination; last known state:", where, error2);
+    const stage = (where == null ? void 0 : where.stage) === null || (where == null ? void 0 : where.stage) === void 0 ? "" : ` It was at \u201C${where.stage}\u201D.`;
+    const blame = where === null || where.pageCount === 0 ? " No page had been laid out yet, so the profile\u2019s stylesheet is the cause rather than the note \u2014 check its @page, break and selector rules." : ` It had laid out ${where.pageCount} page${where.pageCount === 1 ? "" : "s"}.`;
+    return new Error(`The paginator (paged.js) failed: ${message}.${stage}${blame}`);
   }
   /**
    * Restart the page counters at each note, when the profile asks for it.

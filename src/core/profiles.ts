@@ -94,7 +94,13 @@ body { font-family: "Times New Roman", Times, serif; font-size: 12pt; line-heigh
 h1 { break-before: page; string-set: chapter content(text); font-size: 14pt; }
 h2 { font-size: 12pt; }
 p { text-indent: 1.5em; margin: 0; }
-p:first-of-type, h1 + p, h2 + p { text-indent: 0; }
+/* Split deliberately, and it must stay split. paged.js gives *-of-type selectors and sibling
+   combinators a rule handler each, and both handlers delete the rule they rewrite — so one
+   selector list holding both kinds is removed twice and csstree throws "item doesn't belong to
+   list" out of the polisher, before a single page exists. The vendored polyfill is patched to
+   survive that, but the two lines cost nothing and do not depend on the patch. */
+p:first-of-type { text-indent: 0; }
+h1 + p, h2 + p { text-indent: 0; }
 .mx-bibliography { break-before: page; line-height: 1.5; }
 .mx-bibliography > div { text-indent: -2em; padding-left: 2em; margin-bottom: 0.5em; }
 .mx-endnotes { break-before: page; line-height: 1.5; }
@@ -179,8 +185,13 @@ export function createDefaultProfiles(): Profile[] {
  * 1 — profiles ship imperial (US Letter, margins in inches). Settings saved before this
  * carry the old metric defaults, and persisted settings always beat new defaults, so an
  * existing vault would keep 20mm margins forever without the migration below.
+ *
+ * 2 — the Manuscript stylesheet's first-line-indent rule is split in two. A profile
+ * stylesheet is persisted the moment settings are saved, so a vault that has ever opened the
+ * settings tab holds its own copy of the crashing selector list and would never pick up the
+ * fixed default.
  */
-export const SETTINGS_VERSION = 1;
+export const SETTINGS_VERSION = 2;
 
 /**
  * The exact metric page defaults that shipped before `SETTINGS_VERSION` 1, each paired with
@@ -230,6 +241,32 @@ export function migrateLegacyMetricProfiles(profiles: readonly Profile[]): Profi
 			},
 		};
 	});
+}
+
+/**
+ * The exact rule that crashed paged.js, and the two rules that replace it.
+ *
+ * `p:first-of-type` is handled by paged.js's `NthOfType`, `h1 + p` by its `Following`, and each
+ * handler removes the rule it rewrites — so a selector list holding both is removed twice and
+ * csstree throws `item doesn't belong to list` out of the polisher before layout begins.
+ */
+const LEGACY_INDENT_RULE = 'p:first-of-type, h1 + p, h2 + p { text-indent: 0; }';
+const SPLIT_INDENT_RULE = 'p:first-of-type { text-indent: 0; }\nh1 + p, h2 + p { text-indent: 0; }';
+
+/**
+ * Split the crashing indent rule in any persisted stylesheet that still carries it verbatim.
+ *
+ * Matched as an exact line, and only ever replaced with the same declarations expressed as two
+ * rules — so nothing about the rendered result changes, and a stylesheet the user has edited
+ * around that line is left alone. A user who wrote their own equivalent is covered by the
+ * vendored polyfill patch instead; this only rescues the copy the plugin itself handed out.
+ */
+export function migrateCrashingIndentRule(profiles: readonly Profile[]): Profile[] {
+	return profiles.map((profile) =>
+		profile.stylesheet.includes(LEGACY_INDENT_RULE)
+			? { ...profile, stylesheet: profile.stylesheet.replace(LEGACY_INDENT_RULE, SPLIT_INDENT_RULE) }
+			: profile,
+	);
 }
 
 export function createDefaultSettings(): PluginSettings {
@@ -301,7 +338,8 @@ export function normalizeSettings(loaded: unknown): PluginSettings {
 	const loadedVersion = typeof raw.settingsVersion === 'number' ? raw.settingsVersion : 0;
 	const normalized =
 		Array.isArray(raw.profiles) && raw.profiles.length > 0 ? raw.profiles.map(normalizeProfile) : defaults.profiles;
-	const profiles = loadedVersion < 1 ? migrateLegacyMetricProfiles(normalized) : normalized;
+	const metric = loadedVersion < 1 ? migrateLegacyMetricProfiles(normalized) : normalized;
+	const profiles = loadedVersion < 2 ? migrateCrashingIndentRule(metric) : metric;
 	const ids = new Set(profiles.map((profile) => profile.id));
 	const defaultProfileId =
 		typeof raw.defaultProfileId === 'string' && ids.has(raw.defaultProfileId)

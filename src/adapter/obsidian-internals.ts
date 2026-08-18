@@ -223,30 +223,81 @@ async function retryWhileUnready<T>(attempt: () => Promise<T>, destroyed: () => 
 	}
 }
 
+/**
+ * Run a guest call, and if it rejects, re-raise it saying what the guest actually said.
+ *
+ * The stack is carried over rather than rebuilt: it points into the injected script, which is
+ * where the fault is, and a stack rooted at this line would point at the messenger.
+ */
+async function unwrapped<T>(attempt: () => Promise<T>): Promise<T> {
+	try {
+		return await attempt();
+	} catch (error) {
+		if (!(error instanceof Error)) throw error;
+		const message = unwrapGuestError(error.message);
+		if (message === error.message) throw error;
+		const rethrown = new Error(message);
+		if (error.stack !== undefined) rethrown.stack = error.stack;
+		throw rethrown;
+	}
+}
+
 /** Electron's own wording for "the guest is not ready yet". Matched, not guessed at. */
 function isUnreadyError(error: unknown): boolean {
 	return error instanceof Error && /must be attached to the DOM|dom-ready/i.test(error.message);
 }
 
 /**
+ * Electron's IPC wrapper around anything a `<webview>` method reports.
+ *
+ * Every `<webview>` call is routed through the guest view manager, and *any* rejection —
+ * including an ordinary exception thrown by the injected script — comes back as
+ * `Error invoking remote method 'GUEST_VIEW_MANAGER_CALL': Error: <the real message>`.
+ */
+const GUEST_CALL_WRAPPER = /^Error invoking remote method '[^']*':\s*(?:\w*Error:\s*)?/;
+
+/**
+ * The guest's own error message, with Electron's IPC framing taken off.
+ *
+ * The framing is noise in every case and actively misleading in one: a stylesheet error
+ * thrown by paged.js arrives reading like a failure of Electron's remote-method plumbing,
+ * so the one line the user sees names a mechanism that is working fine. Stripping it puts
+ * the paginator's own words in front of them.
+ */
+export function unwrapGuestError(message: string): string {
+	return message.replace(GUEST_CALL_WRAPPER, '');
+}
+
+/**
+ * Phrases Electron uses when the guest WebContents is *gone*.
+ *
+ * Deliberately narrow, and never the `GUEST_VIEW_MANAGER_CALL` prefix itself. That prefix is
+ * on every guest rejection, script exceptions included, so matching it classified a healthy
+ * webview as a dead one: the backend destroyed it, re-ran the work, hit the same script
+ * error, and reported "the preview process stopped … twice" over an error that had nothing
+ * to do with the process. `item doesn't belong to list` was matched for the same reason and
+ * is worse — it is csstree's wording from inside paged.js's polisher, not Electron's at all.
+ *
+ * Failing to recognise a real death costs one honest error message. Mistaking a script error
+ * for a death costs the true message and replaces it with a false one, so the doubt goes
+ * here.
+ */
+const GUEST_GONE = /render frame was disposed|WebContents was destroyed|Object has been destroyed|closed or released|missing guest page|Invalid guestInstanceId|guest instance is not attached/i;
+
+/**
  * True when the guest WebContents is *gone*, as opposed to not started yet.
  *
- * Electron routes every `<webview>` method through `GUEST_VIEW_MANAGER_CALL`, and once the
- * guest's renderer process has died — a crash, an out-of-memory kill, a destroy racing an
- * in-flight call — the manager can no longer find it in its guest list and rejects with
- * `Error invoking remote method 'GUEST_VIEW_MANAGER_CALL': Error: item doesn't belong to
- * list`. That message says nothing about webviews, previews or the document being
- * paginated, so it reaches the user as a non-sequitur; naming the condition here is what
- * lets the backend rebuild the guest and say what actually happened.
+ * Once the guest's renderer process has died — a crash, an out-of-memory kill, a destroy
+ * racing an in-flight call — no call on that WebContents can ever succeed, and naming the
+ * condition here is what lets the backend rebuild the guest rather than surface Electron's
+ * bookkeeping to the user.
  *
  * Distinct from `isUnreadyError`: that one means "not yet", and retrying works. This one
  * means "never again on this WebContents", and only a new one will do.
  */
 export function isGuestGoneError(error: unknown): boolean {
 	if (!(error instanceof Error)) return false;
-	return /GUEST_VIEW_MANAGER_CALL|item doesn't belong to list|render frame was disposed|WebContents was destroyed|Object has been destroyed/i.test(
-		error.message,
-	);
+	return GUEST_GONE.test(error.message);
 }
 
 /** Gap between retries while the guest starts. Short: readiness arrives in milliseconds. */
@@ -361,12 +412,14 @@ export function createPreviewWebview(parent: HTMLElement, partition: string): Pr
 		async run<T>(code: string): Promise<T> {
 			if (destroyed) throw new Error('The preview webview has been destroyed.');
 			await ready();
-			return (await retryWhileUnready(() => element.executeJavaScript(code), () => destroyed)) as T;
+			return (await unwrapped(() =>
+				retryWhileUnready(() => element.executeJavaScript(code), () => destroyed),
+			)) as T;
 		},
 		async printToPdf(options: PrintToPdfOptions): Promise<Uint8Array> {
 			if (destroyed) throw new Error('The preview webview has been destroyed.');
 			await ready();
-			return await retryWhileUnready(() => element.printToPDF(options), () => destroyed);
+			return await unwrapped(() => retryWhileUnready(() => element.printToPDF(options), () => destroyed));
 		},
 		setOffscreen(offscreen: boolean): void {
 			element.toggleClass(PREVIEW_OFFSCREEN_CLASS, offscreen);
