@@ -3,7 +3,7 @@ import type { App } from 'obsidian';
 import { PAGE_SIZES } from './core/page-css';
 import { clearFolderProfile, mappingsUnder, pruneFolderProfiles } from './core/profile-resolver';
 import { createDefaultProfiles, duplicateProfile, makeProfileId, structuredCloneProfile } from './core/profiles';
-import type { AnnotationMode, PageSize, Profile } from './core/types';
+import type { AnnotationMode, PageNumbering, PageSize, Profile } from './core/types';
 import { confirm } from './shell/confirm-modal';
 import type MultiExporterPlugin from './main';
 
@@ -316,6 +316,22 @@ export class MultiExporterSettingTab extends PluginSettingTab {
 					await this.save();
 				}),
 			);
+
+		new Setting(editor)
+			.setName('Page numbering in a merged export')
+			.setDesc(
+				'Per note restarts the count at each note, so the foot reads “1 of 6” then “1 of 12”. ' +
+					'Continuous numbers the whole PDF 1…N. Single-note and Separate exports are one document either way.',
+			)
+			.addDropdown((dropdown) => {
+				dropdown.addOption('per-note', 'Restart at each note');
+				dropdown.addOption('continuous', 'Continuous across the whole PDF');
+				dropdown.setValue(profile.page.pageNumbering);
+				dropdown.onChange(async (value) => {
+					profile.page.pageNumbering = value as PageNumbering;
+					await this.save();
+				});
+			});
 
 		new Setting(editor).setName('Behaviour').setHeading();
 

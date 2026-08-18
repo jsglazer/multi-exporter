@@ -27,6 +27,7 @@ function config(overrides: Partial<PageConfig> = {}): PageConfig {
 		furniture: { bottomCenter: { content: 'counter(page)' } },
 		suppressFirstPageFurniture: false,
 		keepHeadingsWithText: false,
+		pageNumbering: 'continuous',
 		orphans: 2,
 		widows: 2,
 		...overrides,

@@ -10,7 +10,10 @@ import type {
 	PaginateResult,
 	RenderedDocument,
 } from '../core/backend';
+import { planPerNoteNumbering } from '../core/page-numbering';
+import type { NumberingReset } from '../core/page-numbering';
 import { PAGEDJS_BACKEND_ID } from '../core/profiles';
+import type { PageNumbering } from '../core/types';
 
 /**
  * The one real backend: paged.js pagination inside a `<webview>`, printed with
@@ -63,6 +66,9 @@ export class PagedJsWebviewBackend implements ExportBackend {
 			await this.ensurePolyfill(webview);
 			await webview.run<boolean>(paginateScript(request.html, request.css, true));
 			const map = await this.readPageMap(webview);
+			// Before anything measures or scales: the preview must show the same numbering the
+			// PDF will carry, or the one guarantee this plugin makes is broken.
+			await this.applyNumbering(webview, request.page.pageNumbering, map.pageCount);
 			// Diagnostics first: they measure with `getBoundingClientRect`, which the fit
 			// transform below would scale out from under them.
 			await this.reportOverflow(webview);
@@ -139,6 +145,9 @@ export class PagedJsWebviewBackend implements ExportBackend {
 		const map = await this.readPageMap(webview);
 		const documentStartPages = await webview.run<number[]>(DOCUMENT_START_PAGES_SCRIPT);
 
+		await this.applyNumbering(webview, request.profile.page.pageNumbering, map.pageCount, documentStartPages);
+		if (cancelled()) throw new ExportCancelled();
+
 		request.onProgress?.(0.7, 'Printing');
 		const pdf = await webview.printToPdf({
 			printBackground: true,
@@ -153,6 +162,31 @@ export class PagedJsWebviewBackend implements ExportBackend {
 
 		request.onProgress?.(0.85, 'Building outline');
 		return { pdf, pageCount: map.pageCount, headings: map.headings, documentStartPages };
+	}
+
+	/**
+	 * Restart the page counters at each note, when the profile asks for it.
+	 *
+	 * Runs **after** pagination and before anything reads or prints the result, because the
+	 * totals it needs do not exist until the chunker has finished: a note's length in pages is
+	 * an output of pagination, not an input to it. The decision of where the restarts go is
+	 * pure and lives in `core/page-numbering.ts`; this only carries it into the guest.
+	 *
+	 * A no-op for `continuous`, and for a single-document run, where there is nothing to
+	 * restart — paged.js's own document-wide counters are already the right answer.
+	 */
+	private async applyNumbering(
+		webview: PreviewWebview,
+		numbering: PageNumbering,
+		pageCount: number,
+		startPages?: readonly number[],
+	): Promise<void> {
+		if (numbering !== 'per-note') return;
+		const documentStartPages = startPages ?? (await webview.run<number[]>(DOCUMENT_START_PAGES_SCRIPT));
+		const resets = planPerNoteNumbering(documentStartPages, pageCount);
+		// One reset covering the whole document is what continuous numbering already does.
+		if (resets.length <= 1) return;
+		await webview.run<boolean>(numberingScript(resets));
 	}
 
 	private async ensurePolyfill(webview: PreviewWebview): Promise<void> {
@@ -320,6 +354,33 @@ const FIT_PREVIEW_SCRIPT = `(() => {
 	}
 	return true;
 })()`;
+
+/**
+ * Apply the counter restarts to the paginated pages.
+ *
+ * `counter-reset` on a page element creates a **new counter scoped to that element and its
+ * following siblings**, which is what makes this work at all: one declaration on a note's
+ * first page silently re-bases `page` and `pages` for that note's whole run, and the next
+ * note's declaration re-bases them again. Every margin box downstream keeps reading plain
+ * `counter(page)` / `counter(pages)` and gets note-local values.
+ *
+ * `page 0` rather than `page 1`: paged.js already puts `counter-increment: page 1` on every
+ * page element, and on one element a reset is applied before an increment — so the note's
+ * first page lands on 1.
+ *
+ * Set inline rather than through a stylesheet so nothing has to be cleaned up between runs:
+ * every pagination rebuilds the page elements from scratch.
+ */
+function numberingScript(resets: readonly NumberingReset[]): string {
+	return `(() => {
+	const pages = Array.from(document.querySelectorAll('.pagedjs_page'));
+	for (const reset of ${JSON.stringify(resets)}) {
+		const page = pages[reset.pageIndex];
+		if (page) page.style.counterReset = 'page 0 pages ' + reset.total;
+	}
+	return true;
+})()`;
+}
 
 /** Read paged.js's page map back out: page count plus every heading's landing page. */
 const PAGE_MAP_SCRIPT = `(() => {

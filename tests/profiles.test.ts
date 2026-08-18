@@ -118,6 +118,7 @@ describe('a page field the saved settings predate', () => {
 
 		const settings = normalizeSettings(saved);
 		expect(settings.profiles[0]?.page.keepHeadingsWithText).toBe(true);
+		expect(settings.profiles[0]?.page.pageNumbering).toBe('per-note');
 	});
 
 	it('leaves an explicit false alone', () => {

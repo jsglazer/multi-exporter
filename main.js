@@ -4483,6 +4483,7 @@ function defaultPage() {
     furniture: { bottomCenter: { content: "counter(page)" } },
     suppressFirstPageFurniture: false,
     keepHeadingsWithText: true,
+    pageNumbering: "per-note",
     orphans: 2,
     widows: 2
   };
@@ -38847,6 +38848,25 @@ var paged_polyfill_default = `/**
 }));
 `;
 
+// src/core/page-numbering.ts
+function planPerNoteNumbering(documentStartPages, pageCount) {
+  if (pageCount <= 0) return [];
+  const starts = [];
+  for (const start of documentStartPages) {
+    if (!Number.isInteger(start) || start < 0 || start >= pageCount) continue;
+    if (starts.length > 0 && start <= starts[starts.length - 1]) continue;
+    starts.push(start);
+  }
+  if (starts.length === 0 || starts[0] !== 0) starts.unshift(0);
+  return starts.map((start, index) => {
+    var _a;
+    return {
+      pageIndex: start,
+      total: ((_a = starts[index + 1]) != null ? _a : pageCount) - start
+    };
+  });
+}
+
 // src/shell/pagedjs-backend.ts
 var READY_FLAG = "__mxPagedReady";
 var PagedJsWebviewBackend = class {
@@ -38880,6 +38900,7 @@ var PagedJsWebviewBackend = class {
       await this.ensurePolyfill(webview);
       await webview.run(paginateScript(request.html, request.css, true));
       const map = await this.readPageMap(webview);
+      await this.applyNumbering(webview, request.page.pageNumbering, map.pageCount);
       await this.reportOverflow(webview);
       await webview.run(FIT_PREVIEW_SCRIPT);
       return map;
@@ -38937,6 +38958,8 @@ var PagedJsWebviewBackend = class {
     if (cancelled()) throw new ExportCancelled();
     const map = await this.readPageMap(webview);
     const documentStartPages = await webview.run(DOCUMENT_START_PAGES_SCRIPT);
+    await this.applyNumbering(webview, request.profile.page.pageNumbering, map.pageCount, documentStartPages);
+    if (cancelled()) throw new ExportCancelled();
     (_b = request.onProgress) == null ? void 0 : _b.call(request, 0.7, "Printing");
     const pdf = await webview.printToPdf({
       printBackground: true,
@@ -38950,6 +38973,24 @@ var PagedJsWebviewBackend = class {
     if (cancelled()) throw new ExportCancelled();
     (_c = request.onProgress) == null ? void 0 : _c.call(request, 0.85, "Building outline");
     return { pdf, pageCount: map.pageCount, headings: map.headings, documentStartPages };
+  }
+  /**
+   * Restart the page counters at each note, when the profile asks for it.
+   *
+   * Runs **after** pagination and before anything reads or prints the result, because the
+   * totals it needs do not exist until the chunker has finished: a note's length in pages is
+   * an output of pagination, not an input to it. The decision of where the restarts go is
+   * pure and lives in `core/page-numbering.ts`; this only carries it into the guest.
+   *
+   * A no-op for `continuous`, and for a single-document run, where there is nothing to
+   * restart — paged.js's own document-wide counters are already the right answer.
+   */
+  async applyNumbering(webview, numbering, pageCount, startPages) {
+    if (numbering !== "per-note") return;
+    const documentStartPages = startPages != null ? startPages : await webview.run(DOCUMENT_START_PAGES_SCRIPT);
+    const resets = planPerNoteNumbering(documentStartPages, pageCount);
+    if (resets.length <= 1) return;
+    await webview.run(numberingScript(resets));
   }
   async ensurePolyfill(webview) {
     const ready = await webview.run(`Boolean(window.${READY_FLAG})`);
@@ -39076,6 +39117,16 @@ var FIT_PREVIEW_SCRIPT = `(() => {
 	}
 	return true;
 })()`;
+function numberingScript(resets) {
+  return `(() => {
+	const pages = Array.from(document.querySelectorAll('.pagedjs_page'));
+	for (const reset of ${JSON.stringify(resets)}) {
+		const page = pages[reset.pageIndex];
+		if (page) page.style.counterReset = 'page 0 pages ' + reset.total;
+	}
+	return true;
+})()`;
+}
 var PAGE_MAP_SCRIPT = `(() => {
 	const pages = Array.from(document.querySelectorAll('.pagedjs_page'));
 	const headings = [];
@@ -55198,7 +55249,7 @@ var FolderExportModal = class extends import_obsidian6.Modal {
       cls: "mx-hint",
       text: `${notes.length} Markdown note${notes.length === 1 ? "" : "s"}, ordered by folder hierarchy then file name.`
     });
-    new import_obsidian6.Setting(contentEl).setName("Mode").setDesc("Separate reproduces the folder hierarchy; merged produces one continuously paginated PDF.").addDropdown((dropdown) => {
+    new import_obsidian6.Setting(contentEl).setName("Mode").setDesc("Separate reproduces the folder hierarchy; merged produces one PDF, numbered per note or continuously as the profile says.").addDropdown((dropdown) => {
       dropdown.addOption("separate", "Separate \u2014 one PDF per note");
       dropdown.addOption("merged", "Merged \u2014 one PDF");
       dropdown.setValue(this.mode);
@@ -55593,6 +55644,17 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
         await this.save();
       })
     );
+    new import_obsidian8.Setting(editor).setName("Page numbering in a merged export").setDesc(
+      "Per note restarts the count at each note, so the foot reads \u201C1 of 6\u201D then \u201C1 of 12\u201D. Continuous numbers the whole PDF 1\u2026N. Single-note and Separate exports are one document either way."
+    ).addDropdown((dropdown) => {
+      dropdown.addOption("per-note", "Restart at each note");
+      dropdown.addOption("continuous", "Continuous across the whole PDF");
+      dropdown.setValue(profile.page.pageNumbering);
+      dropdown.onChange(async (value) => {
+        profile.page.pageNumbering = value;
+        await this.save();
+      });
+    });
     new import_obsidian8.Setting(editor).setName("Behaviour").setHeading();
     new import_obsidian8.Setting(editor).setName("Resolve citations").setDesc("Treat wikilinks whose target is a known cite key as citations.").addToggle(
       (toggle) => toggle.setValue(profile.flags.resolveCitations).onChange(async (value) => {

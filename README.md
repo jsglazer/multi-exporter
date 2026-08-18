@@ -55,7 +55,7 @@ One paginated DOM feeds both the preview and the PDF writer. That property is st
 - **Real page furniture.** `@page` margin boxes, `counter(page)` / `counter(pages)`, `@page :first`, `@page :left` / `:right` for recto/verso, `orphans` / `widows` / `break-*`. **Keep headings with their text** is a Page toggle, on by default: a heading that would land at the foot of a page moves to the next one along with the paragraph under it. `orphans` and `widows` cannot express that — they count lines *inside* one block, and a stranded heading is a break *between* two. Two named strings are supplied for you — `doctitle` and `docdate` — so a running head can carry the note's name and the export timestamp, and stays correct in a merged export where the answer changes partway down the PDF. The `Article` example uses all four boxes: note name and author over a 0.4pt head rule, `n of m` and the timestamp under a foot rule.
 - **Bulk folder export**, recursive, markdown-only, ordered alphabetically by folder hierarchy then file name:
   - **Separate** — one PDF per note, reproducing the source hierarchy on disk.
-  - **Merged** — a single PDF with continuous page numbering, a combined outline, and running heads that carry across note boundaries.
+  - **Merged** — a single PDF with a combined outline and running heads that carry across note boundaries. **Page numbering restarts at each note by default** — `1 of 6`, then `1 of 12` — and a Page setting switches it to one continuous 1…N count instead. The whole merge is still paginated in a single pass, which is what keeps the preview identical to the output; only the counters are re-based.
 - **PDF bookmarks** built from paged.js's page map, nested by heading level.
 - **Citations and bibliography** via [`zotero-manager`](https://github.com/jsglazer/zotero-manager)'s public API. This plugin implements no citation formatting of its own.
 - **Image inlining** — remote and vault images become data URIs before pagination, so an export is reproducible and works offline.
@@ -73,7 +73,7 @@ Not in the community plugin store yet. Install manually or with BRAT.
 ```sh
 npm install
 npm run build      # tsc --noEmit && esbuild → main.js
-npm test           # 191 headless tests, no Obsidian required
+npm test           # 200 headless tests, no Obsidian required
 ```
 
 ## Usage
@@ -195,7 +195,7 @@ src/core/     Pure decision logic. Zero imports from `obsidian`, node `fs`, or t
 src/adapter/  The ONE module that touches undocumented internals and Electron.
 src/shell/    Obsidian/Electron implementations of the interfaces core declares.
 vendor/       Vendored, patched paged.js, with the diff checked in as a .patch.
-tests/        191 headless tests. Import only from src/core/.
+tests/        200 headless tests. Import only from src/core/.
 ```
 
 Every capability the pipeline needs — rendering, citations, image bytes, pagination, PDF surgery, disk — arrives as an injected interface, so the whole export sequence runs headlessly against fakes. Filesystem writes go through a `FileWriter`; tests inject `InMemoryFileWriter`, so a test run can never touch a real disk.

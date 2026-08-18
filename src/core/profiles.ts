@@ -33,6 +33,7 @@ function defaultPage(): PageConfig {
 		furniture: { bottomCenter: { content: 'counter(page)' } },
 		suppressFirstPageFurniture: false,
 		keepHeadingsWithText: true,
+		pageNumbering: 'per-note',
 		orphans: 2,
 		widows: 2,
 	};

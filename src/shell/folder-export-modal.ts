@@ -56,7 +56,7 @@ export class FolderExportModal extends Modal {
 
 		new Setting(contentEl)
 			.setName('Mode')
-			.setDesc('Separate reproduces the folder hierarchy; merged produces one continuously paginated PDF.')
+			.setDesc('Separate reproduces the folder hierarchy; merged produces one PDF, numbered per note or continuously as the profile says.')
 			.addDropdown((dropdown) => {
 				dropdown.addOption('separate', 'Separate — one PDF per note');
 				dropdown.addOption('merged', 'Merged — one PDF');

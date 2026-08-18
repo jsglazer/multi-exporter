@@ -10,6 +10,15 @@ export type AnnotationMode = 'gutter' | 'endnotes' | 'off';
 
 export type PageSize = 'Letter' | 'Legal' | 'Tabloid' | 'A4' | 'A5';
 
+/**
+ * How `counter(page)` and `counter(pages)` run through a **merged** export.
+ *
+ * `per-note` restarts both at each note, so a ten-note merge reads `1 of 6`, `2 of 6`, …
+ * then `1 of 12` again. `continuous` numbers the whole PDF 1…N. Single-note and Separate
+ * exports have one document either way, so this changes nothing for them.
+ */
+export type PageNumbering = 'per-note' | 'continuous';
+
 export interface PageMargins {
 	top: string;
 	right: string;
@@ -52,6 +61,14 @@ export interface PageConfig {
 	 * is a break *between* two blocks.
 	 */
 	keepHeadingsWithText: boolean;
+	/**
+	 * Whether a merged export restarts page numbering at each note.
+	 *
+	 * Not expressible in CSS: paged.js sets `pages` once from the chunker's final count, and
+	 * CSS Paged Media has no per-section total. It is applied as counter scopes on the
+	 * paginated pages instead — see `core/page-numbering.ts`.
+	 */
+	pageNumbering: PageNumbering;
 	orphans: number;
 	widows: number;
 }
