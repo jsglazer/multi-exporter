@@ -162,8 +162,12 @@ describe('document meta strings', () => {
 		expect(rule).toContain('break-after: avoid');
 	});
 
-	it('cancels a leading page break for the first document only', () => {
-		expect(BASE_DOCUMENT_CSS).toContain('.mx-document-first > .mx-doc-meta + * { break-before: auto; }');
+	// Without this the notes flow into one another and a page can hold the tail of one note and
+	// the head of the next — for which a running head and a per-note page count have no single
+	// right answer. The first note needs no exception: paged.js ignores a break while the
+	// current page is 1.
+	it('starts every note on its own page', () => {
+		expect(BASE_DOCUMENT_CSS).toContain('.mx-document { break-before: page; }');
 	});
 });
 

@@ -810,8 +810,8 @@ function describeStuckHandlers(hooks: Record<string, string> | null): string {
  * rather than `display: none` because paged.js only sets a named string from elements it
  * actually lays out onto a page, and a collapsed element is never laid out.
  *
- * The first section is marked, so a profile can stop its `break-before: page` heading rule
- * from opening the document with a blank page.
+ * The first section carries an extra class, so a profile stylesheet can exempt the opening
+ * note from a rule meant for the ones that follow.
  */
 export function wrapDocumentSections(
 	documents: readonly RenderedDocument[],

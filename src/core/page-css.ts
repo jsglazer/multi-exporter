@@ -60,11 +60,15 @@ mjx-container svg { max-width: 100%; height: auto; }
 .mx-doc-title { string-set: doctitle content(text); }
 .mx-doc-date { string-set: docdate content(text); }
 
-/* A "break-before: page" rule on the document's opening element asks the paginator to break
-   before there is anything to break from, which costs a blank leading page at best. Cancelled
-   for the first block of the first document only, so a merged export still starts each
-   subsequent note on a fresh page. */
-.mx-document-first > .mx-doc-meta + * { break-before: auto; }
+/* Every note starts its own page in a merged export. Without this the notes simply flow into
+   one another: one page ends up holding the tail of one note and the head of the next, which
+   makes a running head and a per-note page count meaningless — there is no single answer for
+   such a page.
+
+   No exception is needed for the first note. paged.js's handleBreaks returns early while the
+   current page is 1, so a break before the very first content is already a no-op; and
+   processBreaks only marks an element that has something before it to break from. */
+.mx-document { break-before: page; }
 `;
 
 const MARGIN_BOXES: [keyof PageFurniture, string][] = [

@@ -58,7 +58,7 @@ One paginated DOM feeds both the preview and the PDF writer. That property is st
 - **Real page furniture.** `@page` margin boxes, `counter(page)` / `counter(pages)`, `@page :first`, `@page :left` / `:right` for recto/verso, `orphans` / `widows` / `break-*`. **Keep headings with their text** is a Page toggle, on by default: a heading that would land at the foot of a page moves to the next one along with the paragraph under it. `orphans` and `widows` cannot express that — they count lines *inside* one block, and a stranded heading is a break *between* two. Two named strings are supplied for you — `doctitle` and `docdate` — so a running head can carry the note's name and the export timestamp, and stays correct in a merged export where the answer changes partway down the PDF. The `Article` example uses all four boxes: note name and author over a 0.4pt head rule, `n of m` and the timestamp under a foot rule.
 - **Bulk folder export**, recursive, markdown-only, ordered alphabetically by folder hierarchy then file name:
   - **Separate** — one PDF per note, reproducing the source hierarchy on disk.
-  - **Merged** — a single PDF with a combined outline and running heads that carry across note boundaries. **Page numbering restarts at each note by default** — `1 of 6`, then `1 of 12` — and a Page setting switches it to one continuous 1…N count instead. The whole merge is still paginated in a single pass, which is what keeps the preview identical to the output; only the counters are re-based.
+  - **Merged** — a single PDF with a combined outline and running heads that carry across note boundaries. **Each note starts on its own page**, and **page numbering restarts at each note by default** — `1 of 6`, then `1 of 12` — and a Page setting switches it to one continuous 1…N count instead. The whole merge is still paginated in a single pass, which is what keeps the preview identical to the output; only the counters are re-based.
 - **PDF bookmarks** built from paged.js's page map, nested by heading level.
 - **Citations and bibliography** via [`zotero-manager`](https://github.com/jsglazer/zotero-manager)'s public API. This plugin implements no citation formatting of its own.
 - **Image inlining** — remote and vault images become data URIs before pagination, so an export is reproducible and works offline.
@@ -127,7 +127,7 @@ selector you would use in a CSS snippet works — `.callout`, `.dataview`, `.int
 | Selector | What it is |
 |---|---|
 | `.mx-document` | One note inside a merged export; carries `data-mx-title` and `data-mx-source` |
-| `.mx-document-first` | Also on the first note, so a leading `break-before: page` can be cancelled |
+| `.mx-document-first` | Also on the first note, for rules that should skip it |
 | `.mx-doc-meta` | Zero-height block opening each note, holding `.mx-doc-title` and `.mx-doc-date` |
 | `.mx-bibliography` | The appended bibliography block, with one `div` per entry |
 | `.mx-endnotes` | The endnotes block, when the profile puts annotations there |
