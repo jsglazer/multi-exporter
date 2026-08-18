@@ -116,6 +116,12 @@ export class ExportService {
 		const host = this.createRenderHost();
 		const ownsBackend = options.backend === undefined;
 		const backend = options.backend ?? new PagedJsWebviewBackend(host);
+		// A backend of our own lives on the off-screen render host, whose height is `auto` so
+		// that Dataview can measure itself. A webview inside an indefinite box hands its guest
+		// the replaced-element default of ~150px, and paged.js measures geometry to decide page
+		// breaks — so it would paginate against a viewport an inch tall. `setOffscreen` is what
+		// gives it real dimensions; it was implemented and never called.
+		if (ownsBackend) backend.setOffscreen(true);
 
 		// The citation gate is resolved here, once per export, and never in `onload`: plugin
 		// load order is not something either plugin controls.

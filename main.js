@@ -39127,6 +39127,20 @@ function bootstrapScript(pagedJsSource) {
 	document.open();
 	document.write('<!doctype html><html><head><meta charset="utf-8"><style id="mx-chrome" media="screen"></style></head><body></body></html>');
 	document.close();
+	// Drive paged.js's render queue from a timer instead of the compositor.
+	//
+	// paged.js paginates through a Queue whose run loop calls this.tick.call(window, ...) with
+	// tick = requestAnimationFrame. Chromium does not fire rAF in a WebContents it considers
+	// hidden \u2014 and a bulk export deliberately runs its webview off-screen, where the guest is
+	// exactly that. The queue then never dequeues: no pages, no error, no timeout, forever.
+	// It is why a single-note export worked (its webview lives in a visible modal) while a
+	// folder export hung on the first note every time.
+	//
+	// Shimmed here, before paged.js is even loaded, because the Queue captures the reference
+	// when it is constructed. A timer keeps pagination independent of whether anything is being
+	// painted, which is the only sane basis for an off-screen paginator.
+	window.requestAnimationFrame = (callback) => window.setTimeout(() => callback(Date.now()), 0);
+	window.cancelAnimationFrame = (handle) => window.clearTimeout(handle);
 	// auto:false \u2014 the polyfill must not start chunking the moment it loads; the host
 	// decides when to paginate, and paginates again in place on every edit.
 	window.PagedConfig = { auto: false };
@@ -55142,6 +55156,7 @@ var ExportService = class {
     const host = this.createRenderHost();
     const ownsBackend = options.backend === void 0;
     const backend = (_a = options.backend) != null ? _a : new PagedJsWebviewBackend(host);
+    if (ownsBackend) backend.setOffscreen(true);
     const wantsCitations = options.plan.notes.some((note) => note.profile.flags.resolveCitations);
     const gate = await resolveCitationGate(this.app, wantsCitations);
     if (gate.reason !== "ok") {
