@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { buildPageCss, buildStringSetCss, cssString, PAGE_SIZES, runningHeading } from '../src/core/page-css';
+import {
+	BASE_DOCUMENT_CSS,
+	buildPageCss,
+	buildStringSetCss,
+	cssString,
+	PAGE_SIZES,
+	runningHeading,
+} from '../src/core/page-css';
 import { createDefaultProfiles } from '../src/core/profiles';
 import type { PageConfig } from '../src/core/types';
 
@@ -120,5 +127,56 @@ describe('running heads', () => {
 
 	it('emits the string-set rule that populates it', () => {
 		expect(buildStringSetCss('chapter', 'h1')).toBe('h1 {\n\tstring-set: chapter content(text);\n}');
+	});
+});
+
+/**
+ * The running-head plumbing for the note name and the export timestamp.
+ *
+ * A margin box can only say what a named string holds, and the only thing that fills a named
+ * string is a `string-set` on an element in the document. So the base stylesheet and the
+ * backend's document wrapper are two halves of one mechanism: if either half is dropped, the
+ * Article header quietly prints nothing at all rather than failing.
+ */
+describe('document meta strings', () => {
+	it('sets a named string from each half of the meta block', () => {
+		expect(BASE_DOCUMENT_CSS).toContain('.mx-doc-title { string-set: doctitle content(text); }');
+		expect(BASE_DOCUMENT_CSS).toContain('.mx-doc-date { string-set: docdate content(text); }');
+	});
+
+	// Never `display: none`: paged.js sets a named string from elements it lays out onto a
+	// page, and a collapsed element is never laid out — the header would come out empty.
+	it('hides the meta block by collapsing it, not by removing it from layout', () => {
+		const rule = /\.mx-doc-meta \{([^}]*)\}/.exec(BASE_DOCUMENT_CSS)?.[1] ?? '';
+		expect(rule).toContain('height: 0');
+		expect(rule).not.toContain('display: none');
+	});
+
+	it('cancels a leading page break for the first document only', () => {
+		expect(BASE_DOCUMENT_CSS).toContain('.mx-document-first > .mx-doc-meta + * { break-before: auto; }');
+	});
+});
+
+describe('the Article profile furniture', () => {
+	const article = createDefaultProfiles().find((profile) => profile.id === 'article');
+
+	it('exists', () => {
+		expect(article).toBeDefined();
+	});
+
+	it('names the note, the author, the page count and the timestamp', () => {
+		const css = buildPageCss((article as NonNullable<typeof article>).page);
+		expect(css).toContain('@top-left { content: string(doctitle); }');
+		expect(css).toContain('@top-right { content: "Joshua S. Glazer"; }');
+		expect(css).toContain('@bottom-left { content: counter(page) " of " counter(pages); }');
+		expect(css).toContain('@bottom-right { content: string(docdate); }');
+	});
+
+	// The 0.4pt head and foot rules from the fancyhdr block this profile was modelled on.
+	it('rules the head and the foot at 0.4pt', () => {
+		const stylesheet = (article as NonNullable<typeof article>).stylesheet;
+		expect(stylesheet).toContain('.pagedjs_margin-top-left');
+		expect(stylesheet).toContain('border-bottom: 0.4pt solid #000;');
+		expect(stylesheet).toContain('border-top: 0.4pt solid #000;');
 	});
 });

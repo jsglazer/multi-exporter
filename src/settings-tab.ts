@@ -4,6 +4,7 @@ import { PAGE_SIZES } from './core/page-css';
 import { clearFolderProfile, mappingsUnder, pruneFolderProfiles } from './core/profile-resolver';
 import { createDefaultProfiles, duplicateProfile, makeProfileId, structuredCloneProfile } from './core/profiles';
 import type { AnnotationMode, PageSize, Profile } from './core/types';
+import { confirm } from './shell/confirm-modal';
 import type MultiExporterPlugin from './main';
 
 /** Canonical repository. Also `manifest.json`'s `authorUrl` owner. */
@@ -38,7 +39,13 @@ export class MultiExporterSettingTab extends PluginSettingTab {
 		this.renderGeneral(containerEl);
 	}
 
-	/** Repository link, first thing on the page — where the docs and the issues live. */
+	/**
+	 * Repository link and installed version, first thing on the page.
+	 *
+	 * The version is read from the loaded manifest rather than from a constant, so it is the
+	 * version actually running — the number to quote in an issue, which is the whole reason
+	 * it sits next to the repository link.
+	 */
 	private renderHeader(containerEl: HTMLElement): void {
 		const header = containerEl.createDiv({ cls: 'mx-settings-header' });
 		const link = header.createEl('a', {
@@ -47,6 +54,10 @@ export class MultiExporterSettingTab extends PluginSettingTab {
 			href: REPOSITORY_URL,
 		});
 		link.setAttribute('rel', 'noopener');
+		header.createSpan({
+			cls: 'mx-settings-version',
+			text: `v${this.plugin.manifest.version}`,
+		});
 		header.createSpan({
 			cls: 'mx-settings-header-note',
 			text: 'Documentation, stylesheet recipes and issues.',
@@ -101,6 +112,18 @@ export class MultiExporterSettingTab extends PluginSettingTab {
 						.setWarning()
 						.setDisabled(this.settings.profiles.length <= 1)
 						.onClick(async () => {
+							// Deleting a profile takes its stylesheet and page setup with it, writes
+							// `data.json` immediately, and offers no undo. Ask first.
+							const ok = await confirm(this.app, {
+								title: `Delete “${profile.name}”?`,
+								body: [
+									'Its stylesheet, page setup and flags are removed for good — there is no undo.',
+									...describeDeleteFallout(this.settings, profile),
+								],
+								confirmText: 'Delete profile',
+								destructive: true,
+							});
+							if (!ok) return;
 							this.settings.profiles = this.settings.profiles.filter((other) => other.id !== profile.id);
 							// A folder mapping pointing at a deleted profile would resolve to
 							// nothing on every export, so the map is pruned with it.
@@ -140,14 +163,47 @@ export class MultiExporterSettingTab extends PluginSettingTab {
 			)
 			.addButton((button) =>
 				button.setButtonText('Restore example profiles').onClick(async () => {
-					const existing = new Set(this.settings.profiles.map((profile) => profile.id));
-					for (const example of createDefaultProfiles()) {
-						if (!existing.has(example.id)) this.settings.profiles.push(example);
-					}
-					await this.save();
-					this.display();
+					await this.restoreExampleProfiles();
 				}),
 			);
+	}
+
+	/**
+	 * Put the shipped examples back — including over the top of examples already present.
+	 *
+	 * Restoring only what is *missing* cannot repair an example that was edited into a
+	 * corner, and cannot deliver a change to a shipped profile to a vault that already has
+	 * it, which is exactly when someone reaches for this button. So it overwrites, and the
+	 * confirmation names the profiles that are about to be replaced. Profiles the user
+	 * created are never touched: only the shipped ids are candidates.
+	 */
+	private async restoreExampleProfiles(): Promise<void> {
+		const examples = createDefaultProfiles();
+		const exampleIds = new Set(examples.map((example) => example.id));
+		const replaced = this.settings.profiles.filter((profile) => exampleIds.has(profile.id));
+		const added = examples.filter((example) => !this.settings.profiles.some((p) => p.id === example.id));
+
+		const ok = await confirm(this.app, {
+			title: 'Restore example profiles?',
+			body: [
+				replaced.length === 0
+					? 'Nothing existing will be changed.'
+					: `${replaced.map((profile) => `“${profile.name}”`).join(', ')} will be overwritten with the shipped version. Any edits to ${replaced.length === 1 ? 'it' : 'them'} — stylesheet, page setup, flags — are lost.`,
+				added.length === 0
+					? 'Profiles you created yourself are left alone.'
+					: `${added.length} missing example${added.length === 1 ? '' : 's'} will be added. Profiles you created yourself are left alone.`,
+			],
+			confirmText: 'Restore examples',
+			destructive: replaced.length > 0,
+		});
+		if (!ok) return;
+
+		this.settings.profiles = this.settings.profiles.map(
+			(profile) => examples.find((example) => example.id === profile.id) ?? profile,
+		);
+		this.settings.profiles.push(...added);
+		await this.save();
+		this.display();
 	}
 
 	private renderProfileEditor(containerEl: HTMLElement): void {
@@ -397,4 +453,27 @@ export class MultiExporterSettingTab extends PluginSettingTab {
 				}),
 			);
 	}
+}
+
+/**
+ * The consequences of a delete, spelled out in the confirmation.
+ *
+ * Deleting a profile also prunes every folder mapping pointing at it and, if it was the
+ * default, hands that role to whatever profile happens to be first. Both are silent
+ * side-effects on settings the user configured somewhere else entirely, so they are said
+ * out loud before the click rather than discovered afterwards.
+ */
+function describeDeleteFallout(settings: MultiExporterPlugin['settings'], profile: Profile): string[] {
+	const lines: string[] = [];
+	const mapped = Object.entries(settings.folderProfiles).filter(([, id]) => id === profile.id);
+	if (mapped.length > 0) {
+		lines.push(
+			`${mapped.length} folder default${mapped.length === 1 ? '' : 's'} pointing at it will be removed too.`,
+		);
+	}
+	if (settings.defaultProfileId === profile.id) {
+		const next = settings.profiles.find((other) => other.id !== profile.id);
+		lines.push(`It is the default profile; “${next?.name ?? 'the first remaining profile'}” becomes the default.`);
+	}
+	return lines;
 }

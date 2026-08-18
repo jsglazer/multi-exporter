@@ -228,6 +228,27 @@ function isUnreadyError(error: unknown): boolean {
 	return error instanceof Error && /must be attached to the DOM|dom-ready/i.test(error.message);
 }
 
+/**
+ * True when the guest WebContents is *gone*, as opposed to not started yet.
+ *
+ * Electron routes every `<webview>` method through `GUEST_VIEW_MANAGER_CALL`, and once the
+ * guest's renderer process has died — a crash, an out-of-memory kill, a destroy racing an
+ * in-flight call — the manager can no longer find it in its guest list and rejects with
+ * `Error invoking remote method 'GUEST_VIEW_MANAGER_CALL': Error: item doesn't belong to
+ * list`. That message says nothing about webviews, previews or the document being
+ * paginated, so it reaches the user as a non-sequitur; naming the condition here is what
+ * lets the backend rebuild the guest and say what actually happened.
+ *
+ * Distinct from `isUnreadyError`: that one means "not yet", and retrying works. This one
+ * means "never again on this WebContents", and only a new one will do.
+ */
+export function isGuestGoneError(error: unknown): boolean {
+	if (!(error instanceof Error)) return false;
+	return /GUEST_VIEW_MANAGER_CALL|item doesn't belong to list|render frame was disposed|WebContents was destroyed|Object has been destroyed/i.test(
+		error.message,
+	);
+}
+
 /** Gap between retries while the guest starts. Short: readiness arrives in milliseconds. */
 const RETRY_INTERVAL_MS = 150;
 

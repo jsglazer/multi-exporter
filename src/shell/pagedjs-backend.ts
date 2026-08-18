@@ -1,5 +1,5 @@
 import PAGEDJS_SOURCE from 'vendor-text:vendor/pagedjs/paged.polyfill.js';
-import { createPreviewWebview } from '../adapter/obsidian-internals';
+import { createPreviewWebview, isGuestGoneError } from '../adapter/obsidian-internals';
 import type { PreviewWebview } from '../adapter/obsidian-internals';
 import { ExportCancelled } from '../core/backend';
 import type {
@@ -58,20 +58,66 @@ export class PagedJsWebviewBackend implements ExportBackend {
 	}
 
 	async paginate(request: PaginateRequest): Promise<PaginateResult> {
-		const webview = this.container();
-		await this.ensurePolyfill(webview);
-		await webview.run<boolean>(paginateScript(request.html, request.css, true));
-		const map = await this.readPageMap(webview);
-		// Diagnostics first: they measure with `getBoundingClientRect`, which the fit
-		// transform below would scale out from under them.
-		await this.reportOverflow(webview);
-		// Fitting happens last and only in preview mode: it is a `transform` on the page
-		// stack, and a transform is the last thing that may exist when printing.
-		await webview.run<boolean>(FIT_PREVIEW_SCRIPT);
-		return map;
+		return await this.withGuestRecovery('the preview', async () => {
+			const webview = this.container();
+			await this.ensurePolyfill(webview);
+			await webview.run<boolean>(paginateScript(request.html, request.css, true));
+			const map = await this.readPageMap(webview);
+			// Diagnostics first: they measure with `getBoundingClientRect`, which the fit
+			// transform below would scale out from under them.
+			await this.reportOverflow(webview);
+			// Fitting happens last and only in preview mode: it is a `transform` on the page
+			// stack, and a transform is the last thing that may exist when printing.
+			await webview.run<boolean>(FIT_PREVIEW_SCRIPT);
+			return map;
+		});
+	}
+
+	/**
+	 * Run something against the guest; if the guest *died*, build a new one and try once.
+	 *
+	 * A `<webview>`'s guest is a separate renderer process and it can go away underneath a
+	 * call in flight — it is destroyed while a script is running, or it crashes outright.
+	 * Every later call then rejects with Electron's `GUEST_VIEW_MANAGER_CALL ... item doesn't
+	 * belong to list`, which is a sentence about Electron's bookkeeping and tells the user
+	 * nothing: the preview simply reports a failure that a fresh webview would not have had,
+	 * and stays broken until the modal is closed and reopened. Rebuilding is cheap — the
+	 * polyfill is re-injected on demand — so the transient case heals itself.
+	 *
+	 * A second failure of the same kind is *not* transient: the content itself is killing the
+	 * renderer, and no third attempt will change that. It is re-thrown as something a user can
+	 * act on rather than as Electron's list-membership complaint.
+	 */
+	private async withGuestRecovery<T>(subject: string, action: () => Promise<T>): Promise<T> {
+		try {
+			return await action();
+		} catch (error) {
+			if (this.disposed || !isGuestGoneError(error)) throw error;
+			console.warn('[multi-exporter] the preview webview died during %s; rebuilding it and retrying once.', subject, error);
+			this.webview?.destroy();
+			this.webview = null;
+			try {
+				return await action();
+			} catch (retryError) {
+				if (!isGuestGoneError(retryError)) throw retryError;
+				// `cause` is deliberately not used: the bundle targets ES2018, where the two-argument
+				// Error constructor is not declared, so the original message is carried in the text
+				// instead of being dropped.
+				throw new Error(
+					`The preview process stopped while paginating ${subject}, twice. That usually means a ` +
+						'stylesheet the paginator cannot resolve — check the developer console for the paged.js ' +
+						"error, and try the profile's stylesheet without its @page or break rules. " +
+						`(Electron said: ${retryError instanceof Error ? retryError.message : String(retryError)})`,
+				);
+			}
+		}
 	}
 
 	async export(request: ExportRequest): Promise<ExportResult> {
+		return await this.withGuestRecovery('the export', () => this.exportOnce(request));
+	}
+
+	private async exportOnce(request: ExportRequest): Promise<ExportResult> {
 		const webview = this.container();
 		const cancelled = (): boolean => request.isCancelled?.() === true;
 		if (cancelled()) throw new ExportCancelled();
@@ -361,14 +407,56 @@ const DOCUMENT_START_PAGES_SCRIPT = `(() => {
  *
  * Exported so the preview wraps identically: a stylesheet that targets `.mx-document` must
  * see the same tree on screen as in the PDF.
+ *
+ * Each section opens with a zero-height meta block carrying the note's name and the export
+ * timestamp. That block exists so a running head can say them: CSS Paged Media reads text
+ * for a margin box out of the document through `string-set`, and there is no other way to
+ * get "the name of the note this page belongs to" into `@top-left` — least of all in a
+ * merged export, where the answer changes partway down the PDF. It is sized to nothing
+ * rather than `display: none` because paged.js only sets a named string from elements it
+ * actually lays out onto a page, and a collapsed element is never laid out.
+ *
+ * The first section is marked, so a profile can stop its `break-before: page` heading rule
+ * from opening the document with a blank page.
  */
-export function wrapDocumentSections(documents: readonly RenderedDocument[]): string {
+export function wrapDocumentSections(
+	documents: readonly RenderedDocument[],
+	options: { exportedAt?: Date } = {},
+): string {
+	const stamp = formatExportStamp(options.exportedAt ?? new Date());
 	return documents
-		.map(
-			(document, index) =>
-				`<section class="mx-document" data-mx-index="${index}" data-mx-source="${escapeAttribute(document.sourcePath)}" data-mx-title="${escapeAttribute(document.title)}">${document.html}</section>`,
-		)
+		.map((document, index) => {
+			const first = index === 0 ? ' mx-document-first' : '';
+			const meta =
+				`<div class="mx-doc-meta" aria-hidden="true">` +
+				`<span class="mx-doc-title">${escapeText(document.title)}</span>` +
+				`<span class="mx-doc-date">${escapeText(stamp)}</span>` +
+				`</div>`;
+			return (
+				`<section class="mx-document${first}" data-mx-index="${index}"` +
+				` data-mx-source="${escapeAttribute(document.sourcePath)}"` +
+				` data-mx-title="${escapeAttribute(document.title)}">${meta}${document.html}</section>`
+			);
+		})
 		.join('\n');
+}
+
+/**
+ * The export timestamp as it appears in a running foot: `2026-08-18 at 09.41`.
+ *
+ * Local time, and formatted by hand rather than through `toLocaleString`: the same export on
+ * two machines should produce the same footer, and a locale-aware formatter would make it
+ * depend on the OS region setting. The shape mirrors the LaTeX `\dashdate{\today} at
+ * \dottime` this profile was modelled on.
+ */
+export function formatExportStamp(when: Date): string {
+	const pad = (value: number): string => String(value).padStart(2, '0');
+	const date = `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}`;
+	return `${date} at ${pad(when.getHours())}.${pad(when.getMinutes())}`;
+}
+
+function escapeText(value: string): string {
+	return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function escapeAttribute(value: string): string {

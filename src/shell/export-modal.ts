@@ -21,6 +21,21 @@ export class ExportModal extends Modal {
 	private profile: Profile;
 	private status: HTMLElement | null = null;
 	private exporting = false;
+	/** Output file name, without `.pdf`. Starts as the note's own name. */
+	private fileName: string;
+	/**
+	 * The pagination currently in flight, plus whether another was asked for while it ran.
+	 *
+	 * Pagination is not re-entrant: every run destroys the previous paged.js polisher and
+	 * chunker inside the guest, so a second run starting while the first is mid-`preview()`
+	 * pulls the objects out from under it. That is a guest-side crash, and once the guest's
+	 * renderer process is gone every later call fails with Electron's
+	 * `GUEST_VIEW_MANAGER_CALL ... item doesn't belong to list` — a message about a dead
+	 * webview that says nothing about the profile switch that killed it. Flipping the profile
+	 * dropdown while the first preview is still rendering is all it takes.
+	 */
+	private paginating: Promise<void> | null = null;
+	private repaginateQueued = false;
 
 	constructor(
 		app: App,
@@ -32,6 +47,7 @@ export class ExportModal extends Modal {
 		this.profile =
 			resolveProfileForPath(settings.profiles, settings.folderProfiles, file.path, settings.defaultProfileId) ??
 			(settings.profiles[0] as Profile);
+		this.fileName = file.basename;
 	}
 
 	onOpen(): void {
@@ -56,6 +72,18 @@ export class ExportModal extends Modal {
 				void this.repaginate();
 			});
 		});
+
+		new Setting(controls)
+			.setName('File name')
+			.setDesc('Name for the PDF. Leave it as the note name, or type another. `.pdf` is added for you.')
+			.addText((text) =>
+				text
+					.setPlaceholder(this.file.basename)
+					.setValue(this.fileName)
+					.onChange((value) => {
+						this.fileName = value;
+					}),
+			);
 
 		this.status = controls.createDiv({ cls: 'mx-export-status' });
 
@@ -89,6 +117,27 @@ export class ExportModal extends Modal {
 	 * broken images no export would ever produce.
 	 */
 	private async repaginate(): Promise<void> {
+		// One pagination at a time, and at most one more queued behind it: the profile
+		// dropdown can be changed faster than a document paginates, and every intermediate
+		// selection but the last is worth nothing anyway.
+		if (this.paginating !== null) {
+			this.repaginateQueued = true;
+			await this.paginating;
+			return;
+		}
+		this.paginating = this.paginateOnce();
+		try {
+			await this.paginating;
+		} finally {
+			this.paginating = null;
+		}
+		if (this.repaginateQueued) {
+			this.repaginateQueued = false;
+			await this.repaginate();
+		}
+	}
+
+	private async paginateOnce(): Promise<void> {
 		const backend = this.backend;
 		if (backend === null || this.exporting) return;
 		this.setStatus('Rendering…');
@@ -130,6 +179,10 @@ export class ExportModal extends Modal {
 		this.exporting = true;
 		this.setStatus('Exporting…');
 		try {
+			// The export prints through the preview's own backend, so a pagination still in
+			// flight is the same re-entrancy hazard as two previews: let it finish first.
+			await this.paginating;
+
 			const plan = planSeparateExport({
 				paths: [this.file.path],
 				sourceRoot: this.file.parent?.path ?? '',
@@ -140,7 +193,9 @@ export class ExportModal extends Modal {
 				overrideProfile: this.profile,
 			});
 			const note = plan.notes[0];
-			if (note !== undefined) note.destination = singleNoteDestination(outputDir, this.file.path);
+			if (note !== undefined) {
+				note.destination = singleNoteDestination(outputDir, this.file.path, this.fileName);
+			}
 
 			// The preview's own backend does the printing. That is the guarantee this modal
 			// exists to keep: the container on screen is the container that prints, so there

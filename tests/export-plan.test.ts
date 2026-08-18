@@ -182,3 +182,43 @@ describe('destination helpers', () => {
 		expect(ensurePdfExtension('/out/a.PDF')).toBe('/out/a.PDF');
 	});
 });
+
+/**
+ * Renaming the output of a single-note export.
+ *
+ * The name comes from a text field, so it arrives with whatever the user typed in it: an
+ * extension, stray spaces, a dot in the middle, path separators, or nothing at all.
+ */
+describe('renaming a single-note export', () => {
+	it('uses the typed name in place of the note name', () => {
+		expect(singleNoteDestination('/out', 'Research/Chapter 1.md', 'Introduction')).toBe('/out/Introduction.pdf');
+	});
+
+	it('does not add a second .pdf when the name already carries one', () => {
+		expect(singleNoteDestination('/out', 'a.md', 'Report.pdf')).toBe('/out/Report.pdf');
+		expect(singleNoteDestination('/out', 'a.md', 'Report.PDF')).toBe('/out/Report.pdf');
+	});
+
+	// The note-name path goes through `stemName`, which strips everything after the last
+	// dot. A typed name must not: `Q3 2026.final` is a name, not a name plus an extension.
+	it('keeps dots inside a typed name', () => {
+		expect(singleNoteDestination('/out', 'a.md', 'Q3 2026.final')).toBe('/out/Q3 2026.final.pdf');
+	});
+
+	it('falls back to the note name when the field is empty or only spaces', () => {
+		expect(singleNoteDestination('/out', 'Research/Chapter 1.md', '')).toBe('/out/Chapter 1.pdf');
+		expect(singleNoteDestination('/out', 'Research/Chapter 1.md', '   ')).toBe('/out/Chapter 1.pdf');
+		expect(singleNoteDestination('/out', 'Research/Chapter 1.md')).toBe('/out/Chapter 1.pdf');
+	});
+
+	// A typed name is one path segment, never a path: a slash in it must not create a
+	// directory, and neither must it escape the chosen output directory.
+	it('sanitises the typed name into a single safe segment', () => {
+		expect(singleNoteDestination('/out', 'a.md', '../../etc/passwd')).toBe('/out/-..-etc-passwd.pdf');
+		expect(singleNoteDestination('/out', 'a.md', 'a:b|c?d')).toBe('/out/a-b-c-d.pdf');
+	});
+
+	it('falls back to a placeholder rather than an empty file name', () => {
+		expect(singleNoteDestination('/out', 'a.md', '...')).toBe('/out/untitled.pdf');
+	});
+});

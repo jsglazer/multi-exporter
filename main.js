@@ -4263,7 +4263,7 @@ __export(main_exports, {
   default: () => MultiExporterPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian8 = require("obsidian");
+var import_obsidian9 = require("obsidian");
 
 // src/core/paths.ts
 function normalizePath(input) {
@@ -4386,6 +4386,20 @@ table { max-width: 100%; }
 mjx-container { max-width: 100%; }
 mjx-container svg { max-width: 100%; height: auto; }
 .mermaid svg, .block-language-mermaid svg { max-width: 100%; height: auto; }
+
+/* Running-head source. The wrapper carries the note name and the export timestamp so a
+   margin box can name them; it takes no space and prints nothing itself. Sized to zero
+   rather than display:none \u2014 paged.js only sets a named string from an element it actually
+   lays out onto a page, and a collapsed element is never laid out. */
+.mx-doc-meta { height: 0; overflow: hidden; margin: 0; padding: 0; font-size: 0; line-height: 0; color: transparent; }
+.mx-doc-title { string-set: doctitle content(text); }
+.mx-doc-date { string-set: docdate content(text); }
+
+/* A "break-before: page" rule on the document's opening element asks the paginator to break
+   before there is anything to break from, which costs a blank leading page at best. Cancelled
+   for the first block of the first document only, so a merged export still starts each
+   subsequent note on a fresh page. */
+.mx-document-first > .mx-doc-meta + * { break-before: auto; }
 `;
 var MARGIN_BOXES = [
   ["topLeft", "@top-left"],
@@ -4458,6 +4472,7 @@ function cssString(value) {
 
 // src/core/profiles.ts
 var PAGEDJS_BACKEND_ID = "pagedjs-webview";
+var DEFAULT_AUTHOR = "Joshua S. Glazer";
 function defaultPage() {
   return {
     size: "Letter",
@@ -4485,6 +4500,29 @@ h1, h2, h3 { font-family: -apple-system, "Helvetica Neue", sans-serif; line-heig
 img { max-width: 100%; height: auto; break-inside: avoid; }
 figure, blockquote, pre { break-inside: avoid; }
 a { color: inherit; text-decoration: none; }
+
+/* Running head and foot, after LaTeX fancyhdr: note name and author above a 0.4pt rule,
+   page-of-total and the export timestamp below one. The margin boxes themselves are named
+   in the page settings; what is here is how they look.
+
+   The rules sit on the three text-block boxes and not on the corners, so they span the text
+   width exactly as fancyhdr's headrule and footrule do \u2014 a border on the whole margin row
+   would run into the page edges instead. */
+.pagedjs_margin-top-left, .pagedjs_margin-top-center, .pagedjs_margin-top-right {
+	align-items: flex-end;
+	border-bottom: 0.4pt solid #000;
+	padding-bottom: 3pt;
+	font-family: -apple-system, "Helvetica Neue", sans-serif;
+	font-size: 10pt;
+}
+.pagedjs_margin-top-left { font-weight: 700; }
+.pagedjs_margin-bottom-left, .pagedjs_margin-bottom-center, .pagedjs_margin-bottom-right {
+	align-items: flex-start;
+	border-top: 0.4pt solid #000;
+	padding-top: 3pt;
+	font-family: -apple-system, "Helvetica Neue", sans-serif;
+	font-size: 8pt;
+}
 `;
 var DATAVIEW_CSS = `/* Dataview / Datacore pages: wide, landscape, tables that survive a page break. */
 body { font-family: -apple-system, "Helvetica Neue", sans-serif; font-size: 9pt; }
@@ -4511,7 +4549,22 @@ function createDefaultProfiles() {
       backendId: PAGEDJS_BACKEND_ID,
       stylesheet: ARTICLE_CSS,
       cslStyle: "",
-      page: defaultPage(),
+      page: {
+        ...defaultPage(),
+        // Modelled on the fancyhdr block this profile was asked for: note name and
+        // author in the head, "n of m" and the export timestamp in the foot.
+        //
+        // `string(doctitle)` and `string(docdate)` are set from the zero-height meta
+        // block the backend puts at the top of every document, which is the only way
+        // a margin box can name the note it belongs to — and the only one that stays
+        // right in a merged export, where the answer changes partway down the PDF.
+        furniture: {
+          topLeft: { content: "string(doctitle)" },
+          topRight: { content: cssString(DEFAULT_AUTHOR) },
+          bottomLeft: { content: 'counter(page) " of " counter(pages)' },
+          bottomRight: { content: "string(docdate)" }
+        }
+      },
       flags: { ...defaultFlags(), inlineImages: true }
     },
     {
@@ -4800,6 +4853,12 @@ async function retryWhileUnready(attempt, destroyed) {
 }
 function isUnreadyError(error2) {
   return error2 instanceof Error && /must be attached to the DOM|dom-ready/i.test(error2.message);
+}
+function isGuestGoneError(error2) {
+  if (!(error2 instanceof Error)) return false;
+  return /GUEST_VIEW_MANAGER_CALL|item doesn't belong to list|render frame was disposed|WebContents was destroyed|Object has been destroyed/i.test(
+    error2.message
+  );
 }
 var RETRY_INTERVAL_MS = 150;
 var READY_TIMEOUT_MS = 15e3;
@@ -38813,15 +38872,54 @@ var PagedJsWebviewBackend = class {
     (_a = this.webview) == null ? void 0 : _a.setOffscreen(offscreen);
   }
   async paginate(request) {
-    const webview = this.container();
-    await this.ensurePolyfill(webview);
-    await webview.run(paginateScript(request.html, request.css, true));
-    const map = await this.readPageMap(webview);
-    await this.reportOverflow(webview);
-    await webview.run(FIT_PREVIEW_SCRIPT);
-    return map;
+    return await this.withGuestRecovery("the preview", async () => {
+      const webview = this.container();
+      await this.ensurePolyfill(webview);
+      await webview.run(paginateScript(request.html, request.css, true));
+      const map = await this.readPageMap(webview);
+      await this.reportOverflow(webview);
+      await webview.run(FIT_PREVIEW_SCRIPT);
+      return map;
+    });
+  }
+  /**
+   * Run something against the guest; if the guest *died*, build a new one and try once.
+   *
+   * A `<webview>`'s guest is a separate renderer process and it can go away underneath a
+   * call in flight — it is destroyed while a script is running, or it crashes outright.
+   * Every later call then rejects with Electron's `GUEST_VIEW_MANAGER_CALL ... item doesn't
+   * belong to list`, which is a sentence about Electron's bookkeeping and tells the user
+   * nothing: the preview simply reports a failure that a fresh webview would not have had,
+   * and stays broken until the modal is closed and reopened. Rebuilding is cheap — the
+   * polyfill is re-injected on demand — so the transient case heals itself.
+   *
+   * A second failure of the same kind is *not* transient: the content itself is killing the
+   * renderer, and no third attempt will change that. It is re-thrown as something a user can
+   * act on rather than as Electron's list-membership complaint.
+   */
+  async withGuestRecovery(subject, action) {
+    var _a;
+    try {
+      return await action();
+    } catch (error2) {
+      if (this.disposed || !isGuestGoneError(error2)) throw error2;
+      console.warn("[multi-exporter] the preview webview died during %s; rebuilding it and retrying once.", subject, error2);
+      (_a = this.webview) == null ? void 0 : _a.destroy();
+      this.webview = null;
+      try {
+        return await action();
+      } catch (retryError) {
+        if (!isGuestGoneError(retryError)) throw retryError;
+        throw new Error(
+          `The preview process stopped while paginating ${subject}, twice. That usually means a stylesheet the paginator cannot resolve \u2014 check the developer console for the paged.js error, and try the profile's stylesheet without its @page or break rules. (Electron said: ${retryError instanceof Error ? retryError.message : String(retryError)})`
+        );
+      }
+    }
   }
   async export(request) {
+    return await this.withGuestRecovery("the export", () => this.exportOnce(request));
+  }
+  async exportOnce(request) {
     var _a, _b, _c;
     const webview = this.container();
     const cancelled = () => {
@@ -39034,10 +39132,22 @@ var DOCUMENT_START_PAGES_SCRIPT = `(() => {
 	for (let i = 0; i <= max; i++) out.push(starts.has(i) ? starts.get(i) : 0);
 	return out;
 })()`;
-function wrapDocumentSections(documents) {
-  return documents.map(
-    (document, index) => `<section class="mx-document" data-mx-index="${index}" data-mx-source="${escapeAttribute(document.sourcePath)}" data-mx-title="${escapeAttribute(document.title)}">${document.html}</section>`
-  ).join("\n");
+function wrapDocumentSections(documents, options = {}) {
+  var _a;
+  const stamp = formatExportStamp((_a = options.exportedAt) != null ? _a : /* @__PURE__ */ new Date());
+  return documents.map((document, index) => {
+    const first = index === 0 ? " mx-document-first" : "";
+    const meta = `<div class="mx-doc-meta" aria-hidden="true"><span class="mx-doc-title">${escapeText(document.title)}</span><span class="mx-doc-date">${escapeText(stamp)}</span></div>`;
+    return `<section class="mx-document${first}" data-mx-index="${index}" data-mx-source="${escapeAttribute(document.sourcePath)}" data-mx-title="${escapeAttribute(document.title)}">${meta}${document.html}</section>`;
+  }).join("\n");
+}
+function formatExportStamp(when) {
+  const pad = (value) => String(value).padStart(2, "0");
+  const date = `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}`;
+  return `${date} at ${pad(when.getHours())}.${pad(when.getMinutes())}`;
+}
+function escapeText(value) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 function escapeAttribute(value) {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -54864,8 +54974,13 @@ function planMergedExport(input) {
     mergedProfile: input.profile
   };
 }
-function singleNoteDestination(outputDir, sourcePath) {
-  return `${trimTrailingSlash(outputDir)}/${sanitizeFileName(stemName(sourcePath))}.pdf`;
+function singleNoteDestination(outputDir, sourcePath, fileName) {
+  const typed = fileName === void 0 ? "" : fileName.trim();
+  const stem = typed === "" ? stemName(sourcePath) : stripPdfSuffix(typed);
+  return `${trimTrailingSlash(outputDir)}/${sanitizeFileName(stem)}.pdf`;
+}
+function stripPdfSuffix(name) {
+  return name.toLowerCase().endsWith(".pdf") ? name.slice(0, -4) : name;
 }
 function ensurePdfExtension(filePath) {
   return filePath.toLowerCase().endsWith(".pdf") ? filePath : `${filePath}.pdf`;
@@ -54885,7 +55000,21 @@ var ExportModal = class extends import_obsidian5.Modal {
     this.backend = null;
     this.status = null;
     this.exporting = false;
+    /**
+     * The pagination currently in flight, plus whether another was asked for while it ran.
+     *
+     * Pagination is not re-entrant: every run destroys the previous paged.js polisher and
+     * chunker inside the guest, so a second run starting while the first is mid-`preview()`
+     * pulls the objects out from under it. That is a guest-side crash, and once the guest's
+     * renderer process is gone every later call fails with Electron's
+     * `GUEST_VIEW_MANAGER_CALL ... item doesn't belong to list` — a message about a dead
+     * webview that says nothing about the profile switch that killed it. Flipping the profile
+     * dropdown while the first preview is still rendering is all it takes.
+     */
+    this.paginating = null;
+    this.repaginateQueued = false;
     this.profile = (_a = resolveProfileForPath(settings.profiles, settings.folderProfiles, file.path, settings.defaultProfileId)) != null ? _a : settings.profiles[0];
+    this.fileName = file.basename;
   }
   onOpen() {
     const { contentEl, modalEl } = this;
@@ -54906,6 +55035,11 @@ var ExportModal = class extends import_obsidian5.Modal {
         void this.repaginate();
       });
     });
+    new import_obsidian5.Setting(controls).setName("File name").setDesc("Name for the PDF. Leave it as the note name, or type another. `.pdf` is added for you.").addText(
+      (text) => text.setPlaceholder(this.file.basename).setValue(this.fileName).onChange((value) => {
+        this.fileName = value;
+      })
+    );
     this.status = controls.createDiv({ cls: "mx-export-status" });
     const actions = contentEl.createDiv({ cls: "mx-export-actions" });
     new import_obsidian5.Setting(actions).addButton(
@@ -54930,6 +55064,23 @@ var ExportModal = class extends import_obsidian5.Modal {
    * broken images no export would ever produce.
    */
   async repaginate() {
+    if (this.paginating !== null) {
+      this.repaginateQueued = true;
+      await this.paginating;
+      return;
+    }
+    this.paginating = this.paginateOnce();
+    try {
+      await this.paginating;
+    } finally {
+      this.paginating = null;
+    }
+    if (this.repaginateQueued) {
+      this.repaginateQueued = false;
+      await this.repaginate();
+    }
+  }
+  async paginateOnce() {
     const backend = this.backend;
     if (backend === null || this.exporting) return;
     this.setStatus("Rendering\u2026");
@@ -54965,6 +55116,7 @@ var ExportModal = class extends import_obsidian5.Modal {
     this.exporting = true;
     this.setStatus("Exporting\u2026");
     try {
+      await this.paginating;
       const plan = planSeparateExport({
         paths: [this.file.path],
         sourceRoot: (_b = (_a = this.file.parent) == null ? void 0 : _a.path) != null ? _b : "",
@@ -54975,7 +55127,9 @@ var ExportModal = class extends import_obsidian5.Modal {
         overrideProfile: this.profile
       });
       const note = plan.notes[0];
-      if (note !== void 0) note.destination = singleNoteDestination(outputDir, this.file.path);
+      if (note !== void 0) {
+        note.destination = singleNoteDestination(outputDir, this.file.path, this.fileName);
+      }
       const outcome = await this.service.run({
         plan,
         profileFallback: this.profile,
@@ -55159,9 +55313,56 @@ var FolderExportModal = class extends import_obsidian6.Modal {
 };
 
 // src/settings-tab.ts
+var import_obsidian8 = require("obsidian");
+
+// src/shell/confirm-modal.ts
 var import_obsidian7 = require("obsidian");
+var ConfirmModal = class extends import_obsidian7.Modal {
+  constructor(app, options, resolve) {
+    super(app);
+    this.options = options;
+    this.resolve = resolve;
+    this.confirmed = false;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h3", { text: this.options.title });
+    for (const paragraph of this.options.body) contentEl.createEl("p", { text: paragraph });
+    new import_obsidian7.Setting(contentEl).addButton(
+      (button) => button.setButtonText("Cancel").onClick(() => {
+        this.close();
+      })
+    ).addButton((button) => {
+      button.setButtonText(this.options.confirmText).onClick(() => {
+        this.confirmed = true;
+        this.close();
+      });
+      if (this.options.destructive === true) button.setWarning();
+      else button.setCta();
+    });
+  }
+  /**
+   * The single resolution point.
+   *
+   * Obsidian calls this for the close button, Escape and a background click as well as for
+   * the two buttons above, so answering here — rather than in each handler — is what makes
+   * "dismissed" mean "no" instead of leaving the promise pending forever.
+   */
+  onClose() {
+    this.contentEl.empty();
+    this.resolve(this.confirmed);
+  }
+};
+function confirm(app, options) {
+  return new Promise((resolve) => {
+    new ConfirmModal(app, options, resolve).open();
+  });
+}
+
+// src/settings-tab.ts
 var REPOSITORY_URL = "https://github.com/jsglazer/multi-exporter";
-var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
+var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -55176,7 +55377,13 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
     this.renderFolderDefaults(containerEl);
     this.renderGeneral(containerEl);
   }
-  /** Repository link, first thing on the page — where the docs and the issues live. */
+  /**
+   * Repository link and installed version, first thing on the page.
+   *
+   * The version is read from the loaded manifest rather than from a constant, so it is the
+   * version actually running — the number to quote in an issue, which is the whole reason
+   * it sits next to the repository link.
+   */
   renderHeader(containerEl) {
     const header = containerEl.createDiv({ cls: "mx-settings-header" });
     const link = header.createEl("a", {
@@ -55185,6 +55392,10 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
       href: REPOSITORY_URL
     });
     link.setAttribute("rel", "noopener");
+    header.createSpan({
+      cls: "mx-settings-version",
+      text: `v${this.plugin.manifest.version}`
+    });
     header.createSpan({
       cls: "mx-settings-header-note",
       text: "Documentation, stylesheet recipes and issues."
@@ -55197,8 +55408,8 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
     await this.plugin.saveSettings();
   }
   renderProfileList(containerEl) {
-    new import_obsidian7.Setting(containerEl).setName("Profiles").setHeading();
-    new import_obsidian7.Setting(containerEl).setName("Default profile").setDesc("Used when no folder mapping matches.").addDropdown((dropdown) => {
+    new import_obsidian8.Setting(containerEl).setName("Profiles").setHeading();
+    new import_obsidian8.Setting(containerEl).setName("Default profile").setDesc("Used when no folder mapping matches.").addDropdown((dropdown) => {
       for (const profile of this.settings.profiles) dropdown.addOption(profile.id, profile.name);
       dropdown.setValue(this.settings.defaultProfileId);
       dropdown.onChange(async (value) => {
@@ -55207,7 +55418,7 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
       });
     });
     for (const profile of this.settings.profiles) {
-      new import_obsidian7.Setting(containerEl).setName(profile.name).setDesc(profile.id).addButton(
+      new import_obsidian8.Setting(containerEl).setName(profile.name).setDesc(profile.id).addButton(
         (button) => button.setButtonText("Edit").onClick(() => {
           this.editingProfileId = profile.id;
           this.display();
@@ -55223,6 +55434,16 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
       ).addButton(
         (button) => button.setButtonText("Delete").setWarning().setDisabled(this.settings.profiles.length <= 1).onClick(async () => {
           var _a, _b;
+          const ok = await confirm(this.app, {
+            title: `Delete \u201C${profile.name}\u201D?`,
+            body: [
+              "Its stylesheet, page setup and flags are removed for good \u2014 there is no undo.",
+              ...describeDeleteFallout(this.settings, profile)
+            ],
+            confirmText: "Delete profile",
+            destructive: true
+          });
+          if (!ok) return;
           this.settings.profiles = this.settings.profiles.filter((other) => other.id !== profile.id);
           this.settings.folderProfiles = pruneFolderProfiles(
             this.settings.folderProfiles,
@@ -55237,7 +55458,7 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
         })
       );
     }
-    new import_obsidian7.Setting(containerEl).addButton(
+    new import_obsidian8.Setting(containerEl).addButton(
       (button) => button.setButtonText("New profile").setCta().onClick(async () => {
         const template = createDefaultProfiles()[0];
         if (template === void 0) return;
@@ -55254,34 +55475,63 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
       })
     ).addButton(
       (button) => button.setButtonText("Restore example profiles").onClick(async () => {
-        const existing = new Set(this.settings.profiles.map((profile) => profile.id));
-        for (const example of createDefaultProfiles()) {
-          if (!existing.has(example.id)) this.settings.profiles.push(example);
-        }
-        await this.save();
-        this.display();
+        await this.restoreExampleProfiles();
       })
     );
+  }
+  /**
+   * Put the shipped examples back — including over the top of examples already present.
+   *
+   * Restoring only what is *missing* cannot repair an example that was edited into a
+   * corner, and cannot deliver a change to a shipped profile to a vault that already has
+   * it, which is exactly when someone reaches for this button. So it overwrites, and the
+   * confirmation names the profiles that are about to be replaced. Profiles the user
+   * created are never touched: only the shipped ids are candidates.
+   */
+  async restoreExampleProfiles() {
+    const examples = createDefaultProfiles();
+    const exampleIds = new Set(examples.map((example) => example.id));
+    const replaced = this.settings.profiles.filter((profile) => exampleIds.has(profile.id));
+    const added = examples.filter((example) => !this.settings.profiles.some((p) => p.id === example.id));
+    const ok = await confirm(this.app, {
+      title: "Restore example profiles?",
+      body: [
+        replaced.length === 0 ? "Nothing existing will be changed." : `${replaced.map((profile) => `\u201C${profile.name}\u201D`).join(", ")} will be overwritten with the shipped version. Any edits to ${replaced.length === 1 ? "it" : "them"} \u2014 stylesheet, page setup, flags \u2014 are lost.`,
+        added.length === 0 ? "Profiles you created yourself are left alone." : `${added.length} missing example${added.length === 1 ? "" : "s"} will be added. Profiles you created yourself are left alone.`
+      ],
+      confirmText: "Restore examples",
+      destructive: replaced.length > 0
+    });
+    if (!ok) return;
+    this.settings.profiles = this.settings.profiles.map(
+      (profile) => {
+        var _a;
+        return (_a = examples.find((example) => example.id === profile.id)) != null ? _a : profile;
+      }
+    );
+    this.settings.profiles.push(...added);
+    await this.save();
+    this.display();
   }
   renderProfileEditor(containerEl) {
     const profile = this.settings.profiles.find((candidate) => candidate.id === this.editingProfileId);
     if (profile === void 0) return;
     const editor = containerEl.createDiv({ cls: "mx-profile-editor" });
-    new import_obsidian7.Setting(editor).setName(`Editing: ${profile.name}`).setHeading();
-    new import_obsidian7.Setting(editor).setName("Name").addText(
+    new import_obsidian8.Setting(editor).setName(`Editing: ${profile.name}`).setHeading();
+    new import_obsidian8.Setting(editor).setName("Name").addText(
       (text) => text.setValue(profile.name).onChange(async (value) => {
         profile.name = value;
         await this.save();
       })
     );
-    new import_obsidian7.Setting(editor).setName("CSL style").setDesc("Passed to zotero-manager. Leave empty to use its own configured default.").addText(
+    new import_obsidian8.Setting(editor).setName("CSL style").setDesc("Passed to zotero-manager. Leave empty to use its own configured default.").addText(
       (text) => text.setValue(profile.cslStyle).onChange(async (value) => {
         profile.cslStyle = value;
         await this.save();
       })
     );
-    new import_obsidian7.Setting(editor).setName("Page").setHeading();
-    new import_obsidian7.Setting(editor).setName("Page size").addDropdown((dropdown) => {
+    new import_obsidian8.Setting(editor).setName("Page").setHeading();
+    new import_obsidian8.Setting(editor).setName("Page size").addDropdown((dropdown) => {
       for (const size of Object.keys(PAGE_SIZES)) dropdown.addOption(size, size);
       dropdown.setValue(profile.page.size);
       dropdown.onChange(async (value) => {
@@ -55289,7 +55539,7 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
         await this.save();
       });
     });
-    new import_obsidian7.Setting(editor).setName("Orientation").addDropdown((dropdown) => {
+    new import_obsidian8.Setting(editor).setName("Orientation").addDropdown((dropdown) => {
       dropdown.addOption("portrait", "Portrait");
       dropdown.addOption("landscape", "Landscape");
       dropdown.setValue(profile.page.orientation);
@@ -55298,7 +55548,7 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
         await this.save();
       });
     });
-    new import_obsidian7.Setting(editor).setName("Margins").setDesc("Top, right, bottom, left \u2014 any CSS length. Inches by default; mm and pt work too.").addText(
+    new import_obsidian8.Setting(editor).setName("Margins").setDesc("Top, right, bottom, left \u2014 any CSS length. Inches by default; mm and pt work too.").addText(
       (text) => text.setValue(profile.page.margins.top).onChange(async (value) => {
         profile.page.margins.top = value;
         await this.save();
@@ -55319,7 +55569,7 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
         await this.save();
       })
     );
-    new import_obsidian7.Setting(editor).setName("Reset page to defaults").setDesc("Restores the shipped page size, orientation, margins and furniture. Leaves the stylesheet alone.").addButton(
+    new import_obsidian8.Setting(editor).setName("Reset page to defaults").setDesc("Restores the shipped page size, orientation, margins and furniture. Leaves the stylesheet alone.").addButton(
       (button) => button.setButtonText("Reset page").onClick(async () => {
         const template = createDefaultProfiles().find((candidate) => candidate.id === profile.id);
         const source = template != null ? template : createDefaultProfiles()[0];
@@ -55329,38 +55579,38 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
         this.display();
       })
     );
-    new import_obsidian7.Setting(editor).setName("Suppress furniture on the first page").setDesc("Emits @page :first with every margin box emptied.").addToggle(
+    new import_obsidian8.Setting(editor).setName("Suppress furniture on the first page").setDesc("Emits @page :first with every margin box emptied.").addToggle(
       (toggle) => toggle.setValue(profile.page.suppressFirstPageFurniture).onChange(async (value) => {
         profile.page.suppressFirstPageFurniture = value;
         await this.save();
       })
     );
-    new import_obsidian7.Setting(editor).setName("Behaviour").setHeading();
-    new import_obsidian7.Setting(editor).setName("Resolve citations").setDesc("Treat wikilinks whose target is a known cite key as citations.").addToggle(
+    new import_obsidian8.Setting(editor).setName("Behaviour").setHeading();
+    new import_obsidian8.Setting(editor).setName("Resolve citations").setDesc("Treat wikilinks whose target is a known cite key as citations.").addToggle(
       (toggle) => toggle.setValue(profile.flags.resolveCitations).onChange(async (value) => {
         profile.flags.resolveCitations = value;
         await this.save();
       })
     );
-    new import_obsidian7.Setting(editor).setName("Emit bibliography").setDesc("Append a bibliography formatted by zotero-manager.").addToggle(
+    new import_obsidian8.Setting(editor).setName("Emit bibliography").setDesc("Append a bibliography formatted by zotero-manager.").addToggle(
       (toggle) => toggle.setValue(profile.flags.emitBibliography).onChange(async (value) => {
         profile.flags.emitBibliography = value;
         await this.save();
       })
     );
-    new import_obsidian7.Setting(editor).setName("Scan for Pandoc-style citations").setDesc("Opt-in secondary text scan for [@key]. Bare @key is never matched.").addToggle(
+    new import_obsidian8.Setting(editor).setName("Scan for Pandoc-style citations").setDesc("Opt-in secondary text scan for [@key]. Bare @key is never matched.").addToggle(
       (toggle) => toggle.setValue(profile.flags.pandocCitationScan).onChange(async (value) => {
         profile.flags.pandocCitationScan = value;
         await this.save();
       })
     );
-    new import_obsidian7.Setting(editor).setName("Inline images").setDesc("Embed remote and vault images as data URIs, so exports work offline.").addToggle(
+    new import_obsidian8.Setting(editor).setName("Inline images").setDesc("Embed remote and vault images as data URIs, so exports work offline.").addToggle(
       (toggle) => toggle.setValue(profile.flags.inlineImages).onChange(async (value) => {
         profile.flags.inlineImages = value;
         await this.save();
       })
     );
-    new import_obsidian7.Setting(editor).setName("Annotations").setDesc("Where md-annotation comments go. This setting decides, not the sidebar.").addDropdown((dropdown) => {
+    new import_obsidian8.Setting(editor).setName("Annotations").setDesc("Where md-annotation comments go. This setting decides, not the sidebar.").addDropdown((dropdown) => {
       dropdown.addOption("off", "Omit");
       dropdown.addOption("gutter", "In the page margin");
       dropdown.addOption("endnotes", "As endnotes");
@@ -55370,13 +55620,13 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
         await this.save();
       });
     });
-    new import_obsidian7.Setting(editor).setName("Run PDF Squeezer").setDesc("Uses the pdfs CLI when installed. Absence is not an error.").addToggle(
+    new import_obsidian8.Setting(editor).setName("Run PDF Squeezer").setDesc("Uses the pdfs CLI when installed. Absence is not an error.").addToggle(
       (toggle) => toggle.setValue(profile.flags.runSqueezer).onChange(async (value) => {
         profile.flags.runSqueezer = value;
         await this.save();
       })
     );
-    new import_obsidian7.Setting(editor).setName("PDF Squeezer profile").setDesc("Optional path to a .pdfscp file.").addText(
+    new import_obsidian8.Setting(editor).setName("PDF Squeezer profile").setDesc("Optional path to a .pdfscp file.").addText(
       (text) => {
         var _a;
         return text.setValue((_a = profile.flags.squeezerProfile) != null ? _a : "").onChange(async (value) => {
@@ -55386,14 +55636,14 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
         });
       }
     );
-    new import_obsidian7.Setting(editor).setName("Stylesheet").setDesc("The primary styling surface. @page rules are generated from the settings above and placed before this.").setClass("mx-stylesheet-setting");
+    new import_obsidian8.Setting(editor).setName("Stylesheet").setDesc("The primary styling surface. @page rules are generated from the settings above and placed before this.").setClass("mx-stylesheet-setting");
     const textarea = editor.createEl("textarea", { cls: "mx-stylesheet-input" });
     textarea.value = profile.stylesheet;
     textarea.addEventListener("change", () => {
       profile.stylesheet = textarea.value;
       void this.save();
     });
-    new import_obsidian7.Setting(editor).addButton(
+    new import_obsidian8.Setting(editor).addButton(
       (button) => button.setButtonText("Close editor").onClick(() => {
         this.editingProfileId = null;
         this.display();
@@ -55409,7 +55659,7 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
    */
   renderFolderDefaults(containerEl) {
     var _a;
-    new import_obsidian7.Setting(containerEl).setName("Folder defaults").setHeading();
+    new import_obsidian8.Setting(containerEl).setName("Folder defaults").setHeading();
     containerEl.createDiv({
       cls: "mx-hint",
       text: "Add a mapping from the folder context menu. The deepest mapping containing a note wins; these apply to single-note and separate exports, not to merged ones."
@@ -55424,7 +55674,7 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
       row.createSpan({ cls: "mx-folder-map-path", text: folder === "" ? "(vault root)" : folder });
       const profile = this.settings.profiles.find((candidate) => candidate.id === profileId);
       row.createSpan({ text: (_a = profile == null ? void 0 : profile.name) != null ? _a : `${profileId} (missing)` });
-      new import_obsidian7.Setting(row).addButton(
+      new import_obsidian8.Setting(row).addButton(
         (button) => button.setButtonText("Remove").setWarning().onClick(async () => {
           this.settings.folderProfiles = clearFolderProfile(this.settings.folderProfiles, folder);
           await this.save();
@@ -55434,8 +55684,8 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
     }
   }
   renderGeneral(containerEl) {
-    new import_obsidian7.Setting(containerEl).setName("Images").setHeading();
-    new import_obsidian7.Setting(containerEl).setName("Image fetch timeout").setDesc("Milliseconds to wait for a remote image before substituting a placeholder.").addText(
+    new import_obsidian8.Setting(containerEl).setName("Images").setHeading();
+    new import_obsidian8.Setting(containerEl).setName("Image fetch timeout").setDesc("Milliseconds to wait for a remote image before substituting a placeholder.").addText(
       (text) => text.setValue(String(this.settings.imageFetchTimeoutMs)).onChange(async (value) => {
         const parsed = Number.parseInt(value, 10);
         if (Number.isInteger(parsed) && parsed > 0) {
@@ -55446,9 +55696,24 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
     );
   }
 };
+function describeDeleteFallout(settings, profile) {
+  var _a;
+  const lines = [];
+  const mapped = Object.entries(settings.folderProfiles).filter(([, id]) => id === profile.id);
+  if (mapped.length > 0) {
+    lines.push(
+      `${mapped.length} folder default${mapped.length === 1 ? "" : "s"} pointing at it will be removed too.`
+    );
+  }
+  if (settings.defaultProfileId === profile.id) {
+    const next = settings.profiles.find((other) => other.id !== profile.id);
+    lines.push(`It is the default profile; \u201C${(_a = next == null ? void 0 : next.name) != null ? _a : "the first remaining profile"}\u201D becomes the default.`);
+  }
+  return lines;
+}
 
 // src/main.ts
-var MultiExporterPlugin = class extends import_obsidian8.Plugin {
+var MultiExporterPlugin = class extends import_obsidian9.Plugin {
   constructor() {
     super(...arguments);
     this.settings = normalizeSettings(null);
@@ -55485,13 +55750,13 @@ var MultiExporterPlugin = class extends import_obsidian8.Plugin {
     });
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu, file) => {
-        if (file instanceof import_obsidian8.TFile && file.extension === "md") {
+        if (file instanceof import_obsidian9.TFile && file.extension === "md") {
           menu.addItem(
             (item) => item.setTitle("Export to PDF").setIcon("file-output").onClick(() => this.openExportModal(file))
           );
           return;
         }
-        if (file instanceof import_obsidian8.TFolder) {
+        if (file instanceof import_obsidian9.TFolder) {
           menu.addItem(
             (item) => item.setTitle("Export folder to PDF").setIcon("folder-output").onClick(() => this.openFolderExportModal(file))
           );
@@ -55517,14 +55782,14 @@ var MultiExporterPlugin = class extends import_obsidian8.Plugin {
    * changes which mapping applies to it without changing the map itself.
    */
   async handleRename(file, oldPath) {
-    if (!(file instanceof import_obsidian8.TFolder)) return;
+    if (!(file instanceof import_obsidian9.TFolder)) return;
     const result = remapFolderPaths(this.settings.folderProfiles, oldPath, file.path);
     if (!result.changed) return;
     this.settings.folderProfiles = result.map;
     await this.saveSettings();
   }
   async handleDelete(file) {
-    if (!(file instanceof import_obsidian8.TFolder)) return;
+    if (!(file instanceof import_obsidian9.TFolder)) return;
     const result = removeFolderPaths(this.settings.folderProfiles, file.path);
     if (!result.changed) return;
     this.settings.folderProfiles = result.map;
@@ -55543,7 +55808,7 @@ var MultiExporterPlugin = class extends import_obsidian8.Plugin {
               profile.id
             );
             await this.saveSettings();
-            new import_obsidian8.Notice(`${folder.name || "Vault root"} now defaults to ${profile.name}.`);
+            new import_obsidian9.Notice(`${folder.name || "Vault root"} now defaults to ${profile.name}.`);
           })
         );
       }

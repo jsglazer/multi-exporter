@@ -12,6 +12,14 @@ import type { PageConfig, PageMargins, Profile, ProfileFlags, PluginSettings } f
 export const PAGEDJS_BACKEND_ID = 'pagedjs-webview';
 
 /**
+ * Author line in the Article profile's running head.
+ *
+ * A shipped default like any other value in a profile: it is plain text in
+ * `page.furniture.topRight` and is edited or deleted in settings without touching code.
+ */
+const DEFAULT_AUTHOR = 'Joshua S. Glazer';
+
+/**
  * Imperial by default: US Letter, margins in inches.
  *
  * A margin is any CSS length, so `20mm` remains perfectly valid in a profile — this is the
@@ -46,6 +54,29 @@ h1, h2, h3 { font-family: -apple-system, "Helvetica Neue", sans-serif; line-heig
 img { max-width: 100%; height: auto; break-inside: avoid; }
 figure, blockquote, pre { break-inside: avoid; }
 a { color: inherit; text-decoration: none; }
+
+/* Running head and foot, after LaTeX fancyhdr: note name and author above a 0.4pt rule,
+   page-of-total and the export timestamp below one. The margin boxes themselves are named
+   in the page settings; what is here is how they look.
+
+   The rules sit on the three text-block boxes and not on the corners, so they span the text
+   width exactly as fancyhdr's headrule and footrule do — a border on the whole margin row
+   would run into the page edges instead. */
+.pagedjs_margin-top-left, .pagedjs_margin-top-center, .pagedjs_margin-top-right {
+	align-items: flex-end;
+	border-bottom: 0.4pt solid #000;
+	padding-bottom: 3pt;
+	font-family: -apple-system, "Helvetica Neue", sans-serif;
+	font-size: 10pt;
+}
+.pagedjs_margin-top-left { font-weight: 700; }
+.pagedjs_margin-bottom-left, .pagedjs_margin-bottom-center, .pagedjs_margin-bottom-right {
+	align-items: flex-start;
+	border-top: 0.4pt solid #000;
+	padding-top: 3pt;
+	font-family: -apple-system, "Helvetica Neue", sans-serif;
+	font-size: 8pt;
+}
 `;
 
 const DATAVIEW_CSS = `/* Dataview / Datacore pages: wide, landscape, tables that survive a page break. */
@@ -75,7 +106,22 @@ export function createDefaultProfiles(): Profile[] {
 			backendId: PAGEDJS_BACKEND_ID,
 			stylesheet: ARTICLE_CSS,
 			cslStyle: '',
-			page: defaultPage(),
+			page: {
+				...defaultPage(),
+				// Modelled on the fancyhdr block this profile was asked for: note name and
+				// author in the head, "n of m" and the export timestamp in the foot.
+				//
+				// `string(doctitle)` and `string(docdate)` are set from the zero-height meta
+				// block the backend puts at the top of every document, which is the only way
+				// a margin box can name the note it belongs to — and the only one that stays
+				// right in a merged export, where the answer changes partway down the PDF.
+				furniture: {
+					topLeft: { content: 'string(doctitle)' },
+					topRight: { content: cssString(DEFAULT_AUTHOR) },
+					bottomLeft: { content: 'counter(page) " of " counter(pages)' },
+					bottomRight: { content: 'string(docdate)' },
+				},
+			},
 			flags: { ...defaultFlags(), inlineImages: true },
 		},
 		{

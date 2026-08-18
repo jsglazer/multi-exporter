@@ -122,9 +122,23 @@ export function planMergedExport(input: MergedPlanInput): ExportPlan {
 	};
 }
 
-/** Destination for a single-note export into a chosen directory. */
-export function singleNoteDestination(outputDir: string, sourcePath: string): string {
-	return `${trimTrailingSlash(outputDir)}/${sanitizeFileName(stemName(sourcePath))}.pdf`;
+/**
+ * Destination for a single-note export into a chosen directory.
+ *
+ * `fileName` is the name typed in the export modal. It is a *file name*, not a path, so it
+ * is sanitised as one segment and never run through `stemName` — `stemName` strips
+ * everything after the last dot, which would silently turn `Q3 2026.final` into `Q3 2026`.
+ * Only a trailing `.pdf` is removed, so typing the extension does not produce `x.pdf.pdf`.
+ * An empty or whitespace-only name falls back to the note's own stem.
+ */
+export function singleNoteDestination(outputDir: string, sourcePath: string, fileName?: string): string {
+	const typed = fileName === undefined ? '' : fileName.trim();
+	const stem = typed === '' ? stemName(sourcePath) : stripPdfSuffix(typed);
+	return `${trimTrailingSlash(outputDir)}/${sanitizeFileName(stem)}.pdf`;
+}
+
+function stripPdfSuffix(name: string): string {
+	return name.toLowerCase().endsWith('.pdf') ? name.slice(0, -4) : name;
 }
 
 export function ensurePdfExtension(filePath: string): string {
