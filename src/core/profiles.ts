@@ -1,5 +1,5 @@
 import { cssString } from './page-css';
-import type { PageConfig, PageMargins, Profile, ProfileFlags, PluginSettings } from './types';
+import type { PageConfig, PageFurniture, PageMargins, Profile, ProfileFlags, PluginSettings } from './types';
 
 /**
  * Profiles are data, not code.
@@ -90,9 +90,21 @@ tr { break-inside: avoid; }
 `;
 
 const MANUSCRIPT_CSS = `/* Dissertation chapters: recto/verso furniture, running heads, endnotes. */
-body { font-family: "Times New Roman", Times, serif; font-size: 12pt; line-height: 2; text-align: justify; }
+/* text-align-last, because a soft line break inside a paragraph is a *forced* break, and the
+   line before a forced break is not the block's last line — so justification stretches it to
+   the full measure. Obsidian turns every single newline into one of these, which in a
+   justified manuscript leaves a trail of six-word lines spaced out like a ransom note. */
+body { font-family: "Times New Roman", Times, serif; font-size: 12pt; line-height: 2; text-align: justify; text-align-last: left; }
 h1 { break-before: page; string-set: chapter content(text); font-size: 14pt; }
 h2 { font-size: 12pt; }
+/* Seed the running head from the note's title, so it never prints blank.
+   \`chapter\` is set by each h1 below, but plenty of notes start at h2 — # is often reserved
+   for the note title, or there is no title heading at all — and a named string that is never
+   set makes \`string(chapter)\` empty, which is a silently headerless document. Seeding it
+   here means the head reads the note name until the first h1 replaces it, and a document
+   with no h1 keeps the note name throughout. The doctitle half repeats the base rule because
+   a second string-set on the same element would otherwise override it. */
+.mx-doc-title { string-set: doctitle content(text), chapter content(text); }
 p { text-indent: 1.5em; margin: 0; }
 /* Split deliberately, and it must stay split. paged.js gives *-of-type selectors and sibling
    combinators a rule handler each, and both handlers delete the rule they rewrite — so one
@@ -164,7 +176,13 @@ export function createDefaultProfiles(): Profile[] {
 				...defaultPage(),
 				// A wider left margin is the binding edge, the one place a manuscript wants asymmetry.
 				margins: { top: '1in', right: '1in', bottom: '1in', left: '1.25in' },
-				furniture: { topCenter: { content: 'string(chapter)' }, bottomCenter: { content: 'counter(page)' } },
+				// Empty on purpose. `@page :left` / `:right` do not *replace* the general `@page`
+				// rule, they cascade with it — a margin box the general rule fills stays filled on
+				// every page, recto and verso alike. Putting the page number in `@bottom-center`
+				// here as well as in the outer corners below printed it twice on every page, once
+				// centred and once in the corner. Anything genuinely common to both sides can go
+				// here; anything the recto/verso blocks also set must not.
+				furniture: {},
 				rectoFurniture: { topRight: { content: 'string(chapter)' }, bottomRight: { content: 'counter(page)' } },
 				versoFurniture: { topLeft: { content: 'string(chapter)' }, bottomLeft: { content: 'counter(page)' } },
 				suppressFirstPageFurniture: true,
@@ -190,8 +208,13 @@ export function createDefaultProfiles(): Profile[] {
  * stylesheet is persisted the moment settings are saved, so a vault that has ever opened the
  * settings tab holds its own copy of the crashing selector list and would never pick up the
  * fixed default.
+ *
+ * 3 — Manuscript's general `@page` furniture is emptied, because it cascaded with the
+ * recto/verso blocks rather than being replaced by them and printed the page number twice on
+ * every page. Same reasoning as 2: the page config is persisted, so the shipped fix alone
+ * reaches nobody who already has the profile.
  */
-export const SETTINGS_VERSION = 2;
+export const SETTINGS_VERSION = 3;
 
 /**
  * The exact metric page defaults that shipped before `SETTINGS_VERSION` 1, each paired with
@@ -269,6 +292,57 @@ export function migrateCrashingIndentRule(profiles: readonly Profile[]): Profile
 	);
 }
 
+/**
+ * Empty the general furniture on a profile whose recto/verso blocks already set the same box.
+ *
+ * `@page :left` and `@page :right` cascade *with* the general `@page` rule; they do not
+ * replace it. A profile that puts `counter(page)` in `@bottom-center` and again in the outer
+ * corner therefore prints two page numbers on every page — which is what the shipped
+ * Manuscript profile did.
+ *
+ * Only a box the recto *or* verso block also fills is cleared, and only when its content is
+ * identical to what that block sets. A box the general rule alone owns is genuinely common to
+ * both sides and is left exactly where it is.
+ */
+export function migrateDuplicatedFurniture(profiles: readonly Profile[]): Profile[] {
+	return profiles.map((profile) => {
+		const { furniture, rectoFurniture, versoFurniture } = profile.page;
+		if (rectoFurniture === undefined && versoFurniture === undefined) return profile;
+
+		const sideValues = new Set<string>();
+		for (const side of [rectoFurniture, versoFurniture]) {
+			for (const [key] of MARGIN_BOX_KEYS) {
+				const value = side?.[key]?.content.trim();
+				if (value !== undefined && value !== '') sideValues.add(value);
+			}
+		}
+		if (sideValues.size === 0) return profile;
+
+		const kept: PageFurniture = {};
+		let dropped = false;
+		for (const [key] of MARGIN_BOX_KEYS) {
+			const value = furniture[key];
+			if (value === undefined) continue;
+			if (sideValues.has(value.content.trim())) {
+				dropped = true;
+				continue;
+			}
+			kept[key] = value;
+		}
+		return dropped ? { ...profile, page: { ...profile.page, furniture: kept } } : profile;
+	});
+}
+
+/** The six margin boxes, as `[key]` tuples — the order is not significant here. */
+const MARGIN_BOX_KEYS: [keyof PageFurniture][] = [
+	['topLeft'],
+	['topCenter'],
+	['topRight'],
+	['bottomLeft'],
+	['bottomCenter'],
+	['bottomRight'],
+];
+
 export function createDefaultSettings(): PluginSettings {
 	const profiles = createDefaultProfiles();
 	return {
@@ -339,7 +413,8 @@ export function normalizeSettings(loaded: unknown): PluginSettings {
 	const normalized =
 		Array.isArray(raw.profiles) && raw.profiles.length > 0 ? raw.profiles.map(normalizeProfile) : defaults.profiles;
 	const metric = loadedVersion < 1 ? migrateLegacyMetricProfiles(normalized) : normalized;
-	const profiles = loadedVersion < 2 ? migrateCrashingIndentRule(metric) : metric;
+	const indent = loadedVersion < 2 ? migrateCrashingIndentRule(metric) : metric;
+	const profiles = loadedVersion < 3 ? migrateDuplicatedFurniture(indent) : indent;
 	const ids = new Set(profiles.map((profile) => profile.id));
 	const defaultProfileId =
 		typeof raw.defaultProfileId === 'string' && ids.has(raw.defaultProfileId)

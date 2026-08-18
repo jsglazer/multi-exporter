@@ -48,6 +48,11 @@ mjx-container { max-width: 100%; }
 mjx-container svg { max-width: 100%; height: auto; }
 .mermaid svg, .block-language-mermaid svg { max-width: 100%; height: auto; }
 
+/* Obsidian's footnote return arrows are navigation, not content: on screen they jump back to
+   the reference, on paper they are a row of blue ↩ glyphs after every note with nothing to
+   click. The footnote text itself is kept — only the backlink goes. */
+.footnote-backref { display: none; }
+
 /* Running-head source. The wrapper carries the note name and the export timestamp so a
    margin box can name them; it takes no space and prints nothing itself. Sized to zero
    rather than display:none — paged.js only sets a named string from an element it actually

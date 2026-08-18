@@ -3,6 +3,7 @@ import {
 	createDefaultProfiles,
 	createDefaultSettings,
 	migrateCrashingIndentRule,
+	migrateDuplicatedFurniture,
 	migrateLegacyMetricProfiles,
 	normalizeSettings,
 	SETTINGS_VERSION,
@@ -190,5 +191,91 @@ describe('shipped profile stylesheets', () => {
 				expect(bothKinds, `${profile.name}: ${selector.trim()}`).toBe(false);
 			}
 		}
+	});
+});
+
+/**
+ * `@page :left` and `@page :right` cascade *with* the general `@page` rule rather than
+ * replacing it, so a margin box the general rule fills stays filled on both sides. The
+ * shipped Manuscript profile put `counter(page)` in `@bottom-center` and again in each outer
+ * corner, and every page came out of the exporter carrying two page numbers.
+ */
+describe('migrateDuplicatedFurniture', () => {
+	function saved(page: Partial<Profile['page']>): Profile {
+		const template = createDefaultProfiles()[0] as Profile;
+		return { ...template, page: { ...template.page, ...page } as Profile['page'] };
+	}
+
+	const shippedManuscriptPage = {
+		furniture: { topCenter: { content: 'string(chapter)' }, bottomCenter: { content: 'counter(page)' } },
+		rectoFurniture: { topRight: { content: 'string(chapter)' }, bottomRight: { content: 'counter(page)' } },
+		versoFurniture: { topLeft: { content: 'string(chapter)' }, bottomLeft: { content: 'counter(page)' } },
+	};
+
+	it('empties a general box the recto/verso blocks already set', () => {
+		const [migrated] = migrateDuplicatedFurniture([saved(shippedManuscriptPage)]);
+		expect(migrated?.page.furniture).toEqual({});
+		// The side blocks are the ones that place the furniture; they must survive intact.
+		expect(migrated?.page.rectoFurniture).toEqual(shippedManuscriptPage.rectoFurniture);
+		expect(migrated?.page.versoFurniture).toEqual(shippedManuscriptPage.versoFurniture);
+	});
+
+	it('keeps a general box neither side duplicates — that one is genuinely common', () => {
+		const [migrated] = migrateDuplicatedFurniture([
+			saved({
+				...shippedManuscriptPage,
+				furniture: {
+					bottomCenter: { content: 'counter(page)' },
+					topLeft: { content: '"Draft — do not circulate"' },
+				},
+			}),
+		]);
+		expect(migrated?.page.furniture).toEqual({ topLeft: { content: '"Draft — do not circulate"' } });
+	});
+
+	it('leaves a profile with no recto/verso furniture untouched', () => {
+		const original = saved({ furniture: { bottomCenter: { content: 'counter(page)' } } });
+		expect(migrateDuplicatedFurniture([original])[0]).toBe(original);
+	});
+
+	it('leaves a profile whose sides set different content untouched', () => {
+		const original = saved({
+			furniture: { bottomCenter: { content: 'counter(page)' } },
+			rectoFurniture: { topRight: { content: 'string(chapter)' } },
+		});
+		expect(migrateDuplicatedFurniture([original])[0]).toBe(original);
+	});
+
+	it('runs on load for settings saved before schema version 3', () => {
+		const settings = normalizeSettings({ settingsVersion: 2, profiles: [saved(shippedManuscriptPage)] });
+		expect(settings.profiles[0]?.page.furniture).toEqual({});
+		expect(settings.settingsVersion).toBe(SETTINGS_VERSION);
+	});
+
+	it('is not re-run on settings already at the current version', () => {
+		const settings = normalizeSettings({ settingsVersion: SETTINGS_VERSION, profiles: [saved(shippedManuscriptPage)] });
+		expect(settings.profiles[0]?.page.furniture).toEqual(shippedManuscriptPage.furniture);
+	});
+});
+
+describe('the shipped Manuscript profile', () => {
+	const manuscript = createDefaultProfiles().find((profile) => profile.id === 'manuscript') as Profile;
+
+	it('never places the same content in a general box and a recto/verso box', () => {
+		const sides = [manuscript.page.rectoFurniture, manuscript.page.versoFurniture];
+		const sideContent = new Set(
+			sides.flatMap((side) => Object.values(side ?? {}).map((box) => box.content.trim())),
+		);
+		for (const [box, value] of Object.entries(manuscript.page.furniture)) {
+			expect(sideContent.has(value.content.trim()), `@${box} is duplicated by a recto/verso block`).toBe(false);
+		}
+	});
+
+	it('pins the last line of a justified block, so a soft line break is not stretched', () => {
+		expect(manuscript.stylesheet).toContain('text-align: justify; text-align-last: left;');
+	});
+
+	it('seeds the running-head string from the note title, so an h2-only note is not headerless', () => {
+		expect(manuscript.stylesheet).toContain('.mx-doc-title { string-set: doctitle content(text), chapter content(text); }');
 	});
 });

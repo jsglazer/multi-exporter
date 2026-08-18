@@ -4390,6 +4390,11 @@ mjx-container { max-width: 100%; }
 mjx-container svg { max-width: 100%; height: auto; }
 .mermaid svg, .block-language-mermaid svg { max-width: 100%; height: auto; }
 
+/* Obsidian's footnote return arrows are navigation, not content: on screen they jump back to
+   the reference, on paper they are a row of blue \u21A9 glyphs after every note with nothing to
+   click. The footnote text itself is kept \u2014 only the backlink goes. */
+.footnote-backref { display: none; }
+
 /* Running-head source. The wrapper carries the note name and the export timestamp so a
    margin box can name them; it takes no space and prints nothing itself. Sized to zero
    rather than display:none \u2014 paged.js only sets a named string from an element it actually
@@ -4547,9 +4552,21 @@ thead { display: table-header-group; }
 tr { break-inside: avoid; }
 `;
 var MANUSCRIPT_CSS = `/* Dissertation chapters: recto/verso furniture, running heads, endnotes. */
-body { font-family: "Times New Roman", Times, serif; font-size: 12pt; line-height: 2; text-align: justify; }
+/* text-align-last, because a soft line break inside a paragraph is a *forced* break, and the
+   line before a forced break is not the block's last line \u2014 so justification stretches it to
+   the full measure. Obsidian turns every single newline into one of these, which in a
+   justified manuscript leaves a trail of six-word lines spaced out like a ransom note. */
+body { font-family: "Times New Roman", Times, serif; font-size: 12pt; line-height: 2; text-align: justify; text-align-last: left; }
 h1 { break-before: page; string-set: chapter content(text); font-size: 14pt; }
 h2 { font-size: 12pt; }
+/* Seed the running head from the note's title, so it never prints blank.
+   \`chapter\` is set by each h1 below, but plenty of notes start at h2 \u2014 # is often reserved
+   for the note title, or there is no title heading at all \u2014 and a named string that is never
+   set makes \`string(chapter)\` empty, which is a silently headerless document. Seeding it
+   here means the head reads the note name until the first h1 replaces it, and a document
+   with no h1 keeps the note name throughout. The doctitle half repeats the base rule because
+   a second string-set on the same element would otherwise override it. */
+.mx-doc-title { string-set: doctitle content(text), chapter content(text); }
 p { text-indent: 1.5em; margin: 0; }
 /* Split deliberately, and it must stay split. paged.js gives *-of-type selectors and sibling
    combinators a rule handler each, and both handlers delete the rule they rewrite \u2014 so one
@@ -4620,7 +4637,13 @@ function createDefaultProfiles() {
         ...defaultPage(),
         // A wider left margin is the binding edge, the one place a manuscript wants asymmetry.
         margins: { top: "1in", right: "1in", bottom: "1in", left: "1.25in" },
-        furniture: { topCenter: { content: "string(chapter)" }, bottomCenter: { content: "counter(page)" } },
+        // Empty on purpose. `@page :left` / `:right` do not *replace* the general `@page`
+        // rule, they cascade with it — a margin box the general rule fills stays filled on
+        // every page, recto and verso alike. Putting the page number in `@bottom-center`
+        // here as well as in the outer corners below printed it twice on every page, once
+        // centred and once in the corner. Anything genuinely common to both sides can go
+        // here; anything the recto/verso blocks also set must not.
+        furniture: {},
         rectoFurniture: { topRight: { content: "string(chapter)" }, bottomRight: { content: "counter(page)" } },
         versoFurniture: { topLeft: { content: "string(chapter)" }, bottomLeft: { content: "counter(page)" } },
         suppressFirstPageFurniture: true
@@ -4634,7 +4657,7 @@ function createDefaultProfiles() {
     }
   ];
 }
-var SETTINGS_VERSION = 2;
+var SETTINGS_VERSION = 3;
 var LEGACY_METRIC_PAGES = [
   {
     legacy: { top: "20mm", right: "18mm", bottom: "20mm", left: "18mm" },
@@ -4673,6 +4696,41 @@ function migrateCrashingIndentRule(profiles) {
     (profile) => profile.stylesheet.includes(LEGACY_INDENT_RULE) ? { ...profile, stylesheet: profile.stylesheet.replace(LEGACY_INDENT_RULE, SPLIT_INDENT_RULE) } : profile
   );
 }
+function migrateDuplicatedFurniture(profiles) {
+  return profiles.map((profile) => {
+    var _a;
+    const { furniture, rectoFurniture, versoFurniture } = profile.page;
+    if (rectoFurniture === void 0 && versoFurniture === void 0) return profile;
+    const sideValues = /* @__PURE__ */ new Set();
+    for (const side of [rectoFurniture, versoFurniture]) {
+      for (const [key] of MARGIN_BOX_KEYS) {
+        const value = (_a = side == null ? void 0 : side[key]) == null ? void 0 : _a.content.trim();
+        if (value !== void 0 && value !== "") sideValues.add(value);
+      }
+    }
+    if (sideValues.size === 0) return profile;
+    const kept = {};
+    let dropped = false;
+    for (const [key] of MARGIN_BOX_KEYS) {
+      const value = furniture[key];
+      if (value === void 0) continue;
+      if (sideValues.has(value.content.trim())) {
+        dropped = true;
+        continue;
+      }
+      kept[key] = value;
+    }
+    return dropped ? { ...profile, page: { ...profile.page, furniture: kept } } : profile;
+  });
+}
+var MARGIN_BOX_KEYS = [
+  ["topLeft"],
+  ["topCenter"],
+  ["topRight"],
+  ["bottomLeft"],
+  ["bottomCenter"],
+  ["bottomRight"]
+];
 function createDefaultSettings() {
   var _a, _b;
   const profiles = createDefaultProfiles();
@@ -4723,7 +4781,8 @@ function normalizeSettings(loaded) {
   const loadedVersion = typeof raw.settingsVersion === "number" ? raw.settingsVersion : 0;
   const normalized = Array.isArray(raw.profiles) && raw.profiles.length > 0 ? raw.profiles.map(normalizeProfile) : defaults.profiles;
   const metric = loadedVersion < 1 ? migrateLegacyMetricProfiles(normalized) : normalized;
-  const profiles = loadedVersion < 2 ? migrateCrashingIndentRule(metric) : metric;
+  const indent = loadedVersion < 2 ? migrateCrashingIndentRule(metric) : metric;
+  const profiles = loadedVersion < 3 ? migrateDuplicatedFurniture(indent) : indent;
   const ids = new Set(profiles.map((profile) => profile.id));
   const defaultProfileId = typeof raw.defaultProfileId === "string" && ids.has(raw.defaultProfileId) ? raw.defaultProfileId : (_b = (_a = profiles[0]) == null ? void 0 : _a.id) != null ? _b : defaults.defaultProfileId;
   const folderProfiles = {};

@@ -8,7 +8,7 @@ import {
 	runningHeading,
 } from '../src/core/page-css';
 import { createDefaultProfiles } from '../src/core/profiles';
-import type { PageConfig } from '../src/core/types';
+import type { PageConfig, Profile } from '../src/core/types';
 
 /**
  * Page furniture is CSS, not a template string.
@@ -228,5 +228,33 @@ describe('keeping headings with their text', () => {
 	it('still balances its braces', () => {
 		const css = buildPageCss(config({ keepHeadingsWithText: true }));
 		expect([...css].filter((c) => c === '{').length).toBe([...css].filter((c) => c === '}').length);
+	});
+});
+
+/**
+ * Two regressions the AI-v003 export surfaced, both invisible until a real document was
+ * paginated: a page number printed twice per page, and Obsidian's footnote return arrows
+ * printed as a row of blue glyphs with nothing to click.
+ */
+describe('the generated stylesheet, after the duplicated-furniture fix', () => {
+	const manuscript = createDefaultProfiles().find((profile) => profile.id === 'manuscript') as Profile;
+
+	it('emits counter(page) exactly once per side, never a centred copy as well', () => {
+		const css = buildPageCss(manuscript.page);
+		expect(css.match(/counter\(page\)/g)).toHaveLength(2);
+		expect(css).toContain('@page :right {');
+		expect(css).toContain('@page :left {');
+		// The general @page block must carry no margin box at all for this profile.
+		const general = css.slice(0, css.indexOf('@page :'));
+		expect(general).not.toContain('@bottom-');
+		expect(general).not.toContain('@top-');
+	});
+
+	it('still suppresses every box on the first page', () => {
+		expect(buildPageCss(manuscript.page)).toContain('@page :first {');
+	});
+
+	it('hides footnote return arrows, which are navigation and not content', () => {
+		expect(BASE_DOCUMENT_CSS).toContain('.footnote-backref { display: none; }');
 	});
 });
