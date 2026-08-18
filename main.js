@@ -39139,6 +39139,7 @@ function bootstrapScript(pagedJsSource) {
 }
 function paginateScript(html, css, previewChrome) {
   return `(async () => {
+	${AFTER_PARSED_INSTRUMENT}
 	// Each run builds a fresh Previewer, so the previous one's polisher output has to go
 	// with it \u2014 otherwise every refresh leaves another copy of the page rules in the head
 	// and the oldest one keeps winning ties.
@@ -39173,6 +39174,7 @@ function paginateScript(html, css, previewChrome) {
 	previewer.on('rendering', () => { window.__mxStage = 'rendering'; });
 	previewer.on('page', () => { window.__mxStage = 'laying-out-page'; });
 	previewer.on('rendered', () => { window.__mxStage = 'rendered'; });
+	instrumentAfterParsed(previewer);
 	window.__mxStage = 'preview-called';
 	await previewer.preview(source, [{ 'mx-profile.css': ${JSON.stringify(css)} }], document.body);
 	window.__mxStage = 'done';
@@ -39256,8 +39258,43 @@ var STALL_SNAPSHOT_SCRIPT = `(() => {
 		sourceElements: typeof window.__mxSourceElements === 'number' ? window.__mxSourceElements : null,
 		pagesAreaBuilt: Boolean(document.querySelector('.pagedjs_pages')),
 		fontsPending: fontsPending,
+		hooks: window.__mxHooks || null,
 	};
 })()`;
+var AFTER_PARSED_INSTRUMENT = `const instrumentAfterParsed = (previewer) => {
+	try {
+		const hook = previewer.chunker && previewer.chunker.hooks && previewer.chunker.hooks.afterParsed;
+		if (!hook || !Array.isArray(hook.hooks)) return;
+		const names = (window.Paged.registeredHandlers || [])
+			.filter((handler) => handler.prototype && 'afterParsed' in handler.prototype)
+			.map((handler) => handler.name || 'anonymous');
+		window.__mxHooks = {};
+		hook.hooks = hook.hooks.map((task, index) => {
+			const label = names[index] || ('handler-' + index);
+			return function () {
+				window.__mxHooks[label] = 'running';
+				let result;
+				try {
+					result = task.apply(this, arguments);
+				} catch (error) {
+					window.__mxHooks[label] = 'threw: ' + error.message;
+					throw error;
+				}
+				if (result && typeof result.then === 'function') {
+					return result.then(
+						(value) => { window.__mxHooks[label] = 'done'; return value; },
+						(error) => { window.__mxHooks[label] = 'rejected: ' + error.message; throw error; },
+					);
+				}
+				window.__mxHooks[label] = 'done';
+				return result;
+			};
+		});
+	} catch (error) {
+		// Instrumentation must never be the reason an export fails.
+		window.__mxHooks = { instrumentation: 'failed: ' + error.message };
+	}
+};`;
 var PAGE_COUNT_SCRIPT = `document.querySelectorAll('.pagedjs_page').length`;
 var PAGE_MAP_SCRIPT = `(() => {
 	const pages = Array.from(document.querySelectorAll('.pagedjs_page'));
@@ -39327,13 +39364,23 @@ function describeStall(snapshot) {
   if (snapshot.pageCount === 0) {
     const fonts = snapshot.fontsPending > 0 ? ` ${snapshot.fontsPending} font face${snapshot.fontsPending === 1 ? "" : "s"} never finished loading, which blocks layout on its own.` : "";
     const reached = snapshot.pagesAreaBuilt ? "It built its page container but never laid out a first page" : "It never got as far as building its page container";
-    return ` ${reached}, so nothing about the note's content can be the cause \u2014 the fault is in what runs before layout: the profile stylesheet, the break rules applied to it, or fonts.${stage}${size}${fonts} Turning off \u201CKeep headings with their text\u201D in the profile\u2019s Page settings is the quickest thing to rule out.`;
+    const stuckHandler = describeStuckHandlers(snapshot.hooks);
+    return ` ${reached}, so nothing about the note's content can be the cause \u2014 the fault is in what runs before layout.${stuckHandler}${stage}${size}${fonts}`;
   }
   const parts = [];
   if (snapshot.lastElement !== null) parts.push(`last placed ${snapshot.lastElement}`);
   if (snapshot.nextElement !== null) parts.push(`then stuck on ${snapshot.nextElement}`);
   if (parts.length === 0) return ` Nothing identifiable was on the last page.${stage}${size}`;
   return ` It got as far as: ${parts.join(", ")}.${stage} Full detail is in the developer console.`;
+}
+function describeStuckHandlers(hooks) {
+  if (hooks === null) return "";
+  const running = Object.entries(hooks).filter(([, state]) => state === "running");
+  if (running.length === 0) {
+    const failed = Object.entries(hooks).filter(([, state]) => state !== "done");
+    return failed.length === 0 ? " Every pre-layout handler finished, so the hang is after them \u2014 font loading or the first layout pass." : ` Handlers that did not finish cleanly: ${failed.map(([name, state]) => `${name} (${state})`).join(", ")}.`;
+  }
+  return ` It is stuck inside paged.js's ${running.map(([name]) => name).join(" and ")} handler${running.length === 1 ? "" : "s"}.`;
 }
 function wrapDocumentSections(documents, options = {}) {
   var _a;
