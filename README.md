@@ -33,6 +33,9 @@ Obsidian renders the note, so everything a plugin contributes survives. The rend
       ▼
   paged.js  (in webview)        @page, margin boxes, counters, recto/verso
       │
+      ▼
+  Page counters re-based        merged export: restart page / pages at each note
+      │
       ├──────────────────────►  live preview  (this same container)
       ▼
   webview.printToPDF()          margin: 0 — the furniture is already in the DOM
@@ -85,7 +88,21 @@ npm test           # 200 headless tests, no Obsidian required
 | Set a folder's default profile | Right-click the folder → **Default export profile** |
 | Edit profiles and stylesheets | Settings → Multi Exporter |
 
-Folder defaults resolve **nearest-ancestor**: the deepest mapped folder containing a note wins, and they are stored as a path-prefix map in the plugin's `data.json` — nothing is written into your vault. They apply to single-note and Separate exports. **Merged export uses exactly one profile** for the whole document, because continuous page numbering across per-note page geometry means nothing.
+Folder defaults resolve **nearest-ancestor**: the deepest mapped folder containing a note wins, and they are stored as a path-prefix map in the plugin's `data.json` — nothing is written into your vault. They apply to single-note and Separate exports. **Merged export uses exactly one profile** for the whole document: one PDF cannot have a different page size, orientation or margin box set every few pages and still be a document.
+
+### Page controls
+
+Everything above the stylesheet editor shapes the *page* rather than the content, and is
+turned into `@page` rules for you. Most are self-explanatory; these three are not.
+
+| Control | What it does |
+|---|---|
+| **Suppress furniture on the first page** | Emits `@page :first` with all six margin boxes set to `content: none`, so page one prints bare while every later page carries its running head and foot — the CSS Paged Media equivalent of LaTeX's `\thispagestyle{empty}`. It is all six boxes or none: to keep the page number on page one but drop the header, leave this off and override the boxes you *do* want empty in your stylesheet, which is parsed after the generated rules. Note that "first page" means the first page of the **PDF**, not of each note — a merged export fires it once. |
+| **Keep headings with their text** | Emits `break-after: avoid` for `h1`–`h6`, so a heading that would land at the foot of a page moves to the next one along with the paragraph under it. On by default. `orphans` and `widows` cannot express this — they count lines *inside* one block, and a stranded heading is a break *between* two. Opt a level back out with `break-after: auto` in your stylesheet. |
+| **Page numbering in a merged export** | *Restart at each note* (the default) makes a ten-note merge read `1 of 6`, `2 of 6`, … then `1 of 12` again. *Continuous* numbers the whole PDF 1…N. Single-note and Separate exports are one document either way, so this changes nothing for them. |
+
+**Furniture** throughout means the running heads and feet — everything printed in the `@page`
+margin boxes rather than in the text block.
 
 ### Customising a stylesheet
 
