@@ -34,6 +34,26 @@ import type { PageNumbering } from '../core/types';
 /** Marks the document root once the polyfill has been injected, so it happens once. */
 const READY_FLAG = '__mxPagedReady';
 
+/** How often the pagination watchdog asks the guest how many pages it has built. */
+const PAGINATION_POLL_MS = 1000;
+
+/**
+ * How long pagination may produce no new page before it is called stuck.
+ *
+ * Generous on purpose: a single page of a heavy Dataview table is slow, and killing a working
+ * export is worse than waiting. Measured pagination is ~17ms per page, so a minute and a half
+ * without one is not slowness.
+ */
+const PAGINATION_STALL_MS = 90000;
+
+/**
+ * Pages past which pagination is runaway rather than long.
+ *
+ * A 163-page document is a real one; five thousand is not a document, it is a break rule
+ * pushing the same content forward and generating a page each time.
+ */
+const RUNAWAY_PAGE_CEILING = 5000;
+
 export class PagedJsWebviewBackend implements ExportBackend {
 	readonly id = PAGEDJS_BACKEND_ID;
 	readonly label = 'paged.js (webview)';
@@ -55,6 +75,19 @@ export class PagedJsWebviewBackend implements ExportBackend {
 		return this.webview;
 	}
 
+	/**
+	 * Throw the guest away so the next call builds a fresh one.
+	 *
+	 * Distinct from `dispose()`, which retires the backend for good. Destroying the webview
+	 * without also dropping the reference leaves `container()` handing back a dead object, and
+	 * every later call fails with "The preview webview has been destroyed" — turning one
+	 * recoverable failure into a permanently broken modal.
+	 */
+	private resetGuest(): void {
+		this.webview?.destroy();
+		this.webview = null;
+	}
+
 	/** Keep the container off-screen (never `display: none`) while a bulk export runs. */
 	setOffscreen(offscreen: boolean): void {
 		this.webview?.setOffscreen(offscreen);
@@ -64,7 +97,7 @@ export class PagedJsWebviewBackend implements ExportBackend {
 		return await this.withGuestRecovery('the preview', async () => {
 			const webview = this.container();
 			await this.ensurePolyfill(webview);
-			await webview.run<boolean>(paginateScript(request.html, request.css, true));
+			await this.runPagination(webview, paginateScript(request.html, request.css, true));
 			const map = await this.readPageMap(webview);
 			// Before anything measures or scales: the preview must show the same numbering the
 			// PDF will carry, or the one guarantee this plugin makes is broken.
@@ -100,8 +133,7 @@ export class PagedJsWebviewBackend implements ExportBackend {
 		} catch (error) {
 			if (this.disposed || !isGuestGoneError(error)) throw error;
 			console.warn('[multi-exporter] the preview webview died during %s; rebuilding it and retrying once.', subject, error);
-			this.webview?.destroy();
-			this.webview = null;
+			this.resetGuest();
 			try {
 				return await action();
 			} catch (retryError) {
@@ -139,7 +171,7 @@ export class PagedJsWebviewBackend implements ExportBackend {
 		// `false`: no preview chrome and no fit transform, so what Chromium prints is the
 		// page boxes alone — `printBackground` would otherwise paint the preview's backdrop
 		// across every page.
-		await webview.run<boolean>(paginateScript(html, request.css, false));
+		await this.runPagination(webview, paginateScript(html, request.css, false), request.isCancelled);
 		if (cancelled()) throw new ExportCancelled();
 
 		const map = await this.readPageMap(webview);
@@ -162,6 +194,96 @@ export class PagedJsWebviewBackend implements ExportBackend {
 
 		request.onProgress?.(0.85, 'Building outline');
 		return { pdf, pageCount: map.pageCount, headings: map.headings, documentStartPages };
+	}
+
+	/**
+	 * Paginate, watching it.
+	 *
+	 * Pagination is one `executeJavaScript` call that can take a while and, when something
+	 * goes wrong inside the paginator, never returns at all. Awaiting it bare — which is what
+	 * this used to do — makes that failure invisible and inescapable: no error, no timeout,
+	 * and the export modal's Cancel button does nothing, because `isCancelled` is only ever
+	 * read *between* stages. A merged export that stops at "Paginating" then stays there
+	 * forever is that gap, not a mystery.
+	 *
+	 * So the call is raced against a poll of the guest's own page count, which is the one
+	 * number that says what the paginator is actually doing:
+	 *
+	 * - **climbing past any plausible length** — the paginator is generating pages it will
+	 *   never stop generating, usually because a break rule keeps pushing the same content
+	 *   forward. Named as runaway rather than reported as a timeout.
+	 * - **not moving for a long time** — stuck laying out a single page.
+	 * - **not answering the poll at all** — the guest is locked synchronously, which the stall
+	 *   branch catches too, since the count cannot change either.
+	 *
+	 * Any of the three destroys the webview. That is deliberate: the runaway work is happening
+	 * in another process, and letting go of the promise would leave it burning a core until
+	 * Obsidian quits. `withGuestRecovery` builds a fresh one on the next attempt.
+	 */
+	private async runPagination(
+		webview: PreviewWebview,
+		script: string,
+		isCancelled?: () => boolean,
+	): Promise<void> {
+		let settled = false;
+		const run = webview
+			.run<boolean>(script)
+			.then(() => {
+				settled = true;
+			})
+			.catch((error: unknown) => {
+				settled = true;
+				throw error;
+			});
+		// The guest is destroyed on every abort below, which rejects this. Nothing is left to
+		// observe it by then, and an unobserved rejection is a crash in some Electron builds.
+		run.catch(() => undefined);
+
+		const abort = (message: string): never => {
+			this.resetGuest();
+			throw new Error(message);
+		};
+
+		let pages = 0;
+		let lastChange = Date.now();
+		while (!settled) {
+			await new Promise<void>((resolve) => window.setTimeout(resolve, PAGINATION_POLL_MS));
+			if (settled) break;
+
+			if (isCancelled?.() === true) {
+				// Cancelling mid-pagination has to take the guest with it: the work is in another
+				// process and nothing else will stop it.
+				this.resetGuest();
+				throw new ExportCancelled();
+			}
+
+			// A guest locked in synchronous work never answers; that is a stall, so let the
+			// clock below decide rather than treating the silence as a separate failure.
+			const observed = await webview.run<number>(PAGE_COUNT_SCRIPT).catch(() => pages);
+			if (observed !== pages) {
+				pages = observed;
+				lastChange = Date.now();
+			}
+
+			if (pages > RUNAWAY_PAGE_CEILING) {
+				abort(
+					`Pagination ran away: ${pages} pages and still going, which is past anything a real ` +
+						'document produces. A break rule is almost certainly pushing the same content forward ' +
+						'forever — try turning off “Keep headings with their text” in the profile’s Page ' +
+						'settings, or removing its break-before / break-after rules.',
+				);
+			}
+			if (Date.now() - lastChange > PAGINATION_STALL_MS) {
+				abort(
+					`Pagination stopped making progress after ${pages} page${pages === 1 ? '' : 's'} and was ` +
+						`given up on after ${Math.round(PAGINATION_STALL_MS / 1000)}s. The paginator is stuck on ` +
+						'a single page — usually one element it cannot fit and cannot break. Check the ' +
+						'developer console for a paged.js error.',
+				);
+			}
+		}
+
+		await run;
 	}
 
 	/**
@@ -381,6 +503,9 @@ function numberingScript(resets: readonly NumberingReset[]): string {
 	return true;
 })()`;
 }
+
+/** Just the page count — the watchdog's heartbeat, kept as cheap as possible. */
+const PAGE_COUNT_SCRIPT = `document.querySelectorAll('.pagedjs_page').length`;
 
 /** Read paged.js's page map back out: page count plus every heading's landing page. */
 const PAGE_MAP_SCRIPT = `(() => {
