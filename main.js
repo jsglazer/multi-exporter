@@ -39021,9 +39021,14 @@ var PagedJsWebviewBackend = class {
       throw error2;
     });
     run2.catch(() => void 0);
-    const abort = (message) => {
+    const abort = async (message) => {
+      const where = await Promise.race([
+        webview.run(STALL_SNAPSHOT_SCRIPT).catch(() => null),
+        new Promise((resolve) => window.setTimeout(() => resolve(null), STALL_SNAPSHOT_TIMEOUT_MS))
+      ]);
+      console.error("[multi-exporter] pagination gave up; last known state:", where);
       this.resetGuest();
-      throw new Error(message);
+      throw new Error(`${message}${describeStall(where)}`);
     };
     let pages = 0;
     let lastChange = Date.now();
@@ -39040,12 +39045,12 @@ var PagedJsWebviewBackend = class {
         lastChange = Date.now();
       }
       if (pages > RUNAWAY_PAGE_CEILING) {
-        abort(
+        await abort(
           `Pagination ran away: ${pages} pages and still going, which is past anything a real document produces. A break rule is almost certainly pushing the same content forward forever \u2014 try turning off \u201CKeep headings with their text\u201D in the profile\u2019s Page settings, or removing its break-before / break-after rules.`
         );
       }
       if (Date.now() - lastChange > PAGINATION_STALL_MS) {
-        abort(
+        await abort(
           `Pagination stopped making progress after ${pages} page${pages === 1 ? "" : "s"} and was given up on after ${Math.round(PAGINATION_STALL_MS / 1e3)}s. The paginator is stuck on a single page \u2014 usually one element it cannot fit and cannot break. Check the developer console for a paged.js error.`
         );
       }
@@ -39205,6 +39210,29 @@ function numberingScript(resets) {
 	return true;
 })()`;
 }
+var STALL_SNAPSHOT_TIMEOUT_MS = 3e3;
+var STALL_SNAPSHOT_SCRIPT = `(() => {
+	const describe = (element) => {
+		if (!element) return null;
+		const tag = element.tagName ? element.tagName.toLowerCase() : '?';
+		const name = typeof element.className === 'string' && element.className.trim()
+			? '.' + element.className.trim().split(/\\s+/).join('.')
+			: '';
+		const rect = element.getBoundingClientRect();
+		const text = (element.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 80);
+		return tag + name + ' [' + Math.round(rect.width) + 'x' + Math.round(rect.height) + ']' + (text ? ' \u2014 "' + text + '"' : '');
+	};
+	const pages = Array.from(document.querySelectorAll('.pagedjs_page'));
+	const last = pages[pages.length - 1];
+	const content = last ? last.querySelector('.pagedjs_page_content') : null;
+	const placed = content ? content.querySelector(':scope > *:last-child') : null;
+	return {
+		pageCount: pages.length,
+		lastPageChars: content ? (content.textContent || '').trim().length : 0,
+		lastElement: describe(placed),
+		nextElement: describe(placed ? placed.nextElementSibling : null),
+	};
+})()`;
 var PAGE_COUNT_SCRIPT = `document.querySelectorAll('.pagedjs_page').length`;
 var PAGE_MAP_SCRIPT = `(() => {
 	const pages = Array.from(document.querySelectorAll('.pagedjs_page'));
@@ -39265,6 +39293,18 @@ var DOCUMENT_START_PAGES_SCRIPT = `(() => {
 	for (let i = 0; i <= max; i++) out.push(starts.has(i) ? starts.get(i) : 0);
 	return out;
 })()`;
+function describeStall(snapshot) {
+  if (snapshot === null) {
+    return " The paginator did not answer a diagnostic query either, which means it is locked solid rather than merely slow.";
+  }
+  const parts = [];
+  if (snapshot.lastElement !== null) parts.push(`last placed ${snapshot.lastElement}`);
+  if (snapshot.nextElement !== null) parts.push(`then stuck on ${snapshot.nextElement}`);
+  if (parts.length === 0) {
+    return snapshot.lastPageChars === 0 ? " The last page is still empty, so it stalled before laying anything onto it at all." : " Nothing identifiable was on the last page; see the developer console.";
+  }
+  return ` It got as far as: ${parts.join(", ")}. Full detail is in the developer console.`;
+}
 function wrapDocumentSections(documents, options = {}) {
   var _a;
   const stamp = formatExportStamp((_a = options.exportedAt) != null ? _a : /* @__PURE__ */ new Date());

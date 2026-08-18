@@ -76,7 +76,7 @@ Not in the community plugin store yet. Install manually or with BRAT.
 ```sh
 npm install
 npm run build      # tsc --noEmit && esbuild → main.js
-npm test           # 200 headless tests, no Obsidian required
+npm test           # 215 headless tests, no Obsidian required
 ```
 
 ## Usage
@@ -212,7 +212,7 @@ src/core/     Pure decision logic. Zero imports from `obsidian`, node `fs`, or t
 src/adapter/  The ONE module that touches undocumented internals and Electron.
 src/shell/    Obsidian/Electron implementations of the interfaces core declares.
 vendor/       Vendored, patched paged.js, with the diff checked in as a .patch.
-tests/        200 headless tests. Import only from src/core/.
+tests/        215 headless tests. Import only from src/core/.
 ```
 
 Every capability the pipeline needs — rendering, citations, image bytes, pagination, PDF surgery, disk — arrives as an injected interface, so the whole export sequence runs headlessly against fakes. Filesystem writes go through a `FileWriter`; tests inject `InMemoryFileWriter`, so a test run can never touch a real disk.

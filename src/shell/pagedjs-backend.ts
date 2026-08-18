@@ -239,9 +239,17 @@ export class PagedJsWebviewBackend implements ExportBackend {
 		// observe it by then, and an unobserved rejection is a crash in some Electron builds.
 		run.catch(() => undefined);
 
-		const abort = (message: string): never => {
+		const abort = async (message: string): Promise<never> => {
+			// Ask what it was working on *before* the guest is destroyed — afterwards there is
+			// nothing left to ask. A locked guest will not answer; the timeout gives up rather
+			// than turning a diagnostic into a second hang.
+			const where = await Promise.race([
+				webview.run<StallSnapshot | null>(STALL_SNAPSHOT_SCRIPT).catch(() => null),
+				new Promise<null>((resolve) => window.setTimeout(() => resolve(null), STALL_SNAPSHOT_TIMEOUT_MS)),
+			]);
+			console.error('[multi-exporter] pagination gave up; last known state:', where);
 			this.resetGuest();
-			throw new Error(message);
+			throw new Error(`${message}${describeStall(where)}`);
 		};
 
 		let pages = 0;
@@ -266,7 +274,7 @@ export class PagedJsWebviewBackend implements ExportBackend {
 			}
 
 			if (pages > RUNAWAY_PAGE_CEILING) {
-				abort(
+				await abort(
 					`Pagination ran away: ${pages} pages and still going, which is past anything a real ` +
 						'document produces. A break rule is almost certainly pushing the same content forward ' +
 						'forever — try turning off “Keep headings with their text” in the profile’s Page ' +
@@ -274,7 +282,7 @@ export class PagedJsWebviewBackend implements ExportBackend {
 				);
 			}
 			if (Date.now() - lastChange > PAGINATION_STALL_MS) {
-				abort(
+				await abort(
 					`Pagination stopped making progress after ${pages} page${pages === 1 ? '' : 's'} and was ` +
 						`given up on after ${Math.round(PAGINATION_STALL_MS / 1000)}s. The paginator is stuck on ` +
 						'a single page — usually one element it cannot fit and cannot break. Check the ' +
@@ -504,6 +512,52 @@ function numberingScript(resets: readonly NumberingReset[]): string {
 })()`;
 }
 
+/** How long the stall diagnostic may take before it is abandoned. */
+const STALL_SNAPSHOT_TIMEOUT_MS = 3000;
+
+/** What the paginator had managed to lay out when it stopped making progress. */
+interface StallSnapshot {
+	pageCount: number;
+	/** Characters on the last page. Zero means it stalled before laying anything down. */
+	lastPageChars: number;
+	/** The last element placed on the last page — the thing it got stuck *after*. */
+	lastElement: string | null;
+	/** The element queued behind it, which is usually the one it cannot fit. */
+	nextElement: string | null;
+}
+
+/**
+ * Name the element pagination died on.
+ *
+ * A page count says *that* something is wrong; this says *what*. The last element placed and
+ * the one queued behind it are almost always the answer — an image or a code block taller than
+ * the page box, a table row that cannot be split — and without them a stall report is a number
+ * the user can do nothing with. Sizes are included because "taller than the page" is the whole
+ * diagnosis in most cases.
+ */
+const STALL_SNAPSHOT_SCRIPT = `(() => {
+	const describe = (element) => {
+		if (!element) return null;
+		const tag = element.tagName ? element.tagName.toLowerCase() : '?';
+		const name = typeof element.className === 'string' && element.className.trim()
+			? '.' + element.className.trim().split(/\\s+/).join('.')
+			: '';
+		const rect = element.getBoundingClientRect();
+		const text = (element.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 80);
+		return tag + name + ' [' + Math.round(rect.width) + 'x' + Math.round(rect.height) + ']' + (text ? ' — "' + text + '"' : '');
+	};
+	const pages = Array.from(document.querySelectorAll('.pagedjs_page'));
+	const last = pages[pages.length - 1];
+	const content = last ? last.querySelector('.pagedjs_page_content') : null;
+	const placed = content ? content.querySelector(':scope > *:last-child') : null;
+	return {
+		pageCount: pages.length,
+		lastPageChars: content ? (content.textContent || '').trim().length : 0,
+		lastElement: describe(placed),
+		nextElement: describe(placed ? placed.nextElementSibling : null),
+	};
+})()`;
+
 /** Just the page count — the watchdog's heartbeat, kept as cheap as possible. */
 const PAGE_COUNT_SCRIPT = `document.querySelectorAll('.pagedjs_page').length`;
 
@@ -587,6 +641,22 @@ const DOCUMENT_START_PAGES_SCRIPT = `(() => {
 	for (let i = 0; i <= max; i++) out.push(starts.has(i) ? starts.get(i) : 0);
 	return out;
 })()`;
+
+/** Turn a stall snapshot into the tail of an error message a user can act on. */
+function describeStall(snapshot: StallSnapshot | null): string {
+	if (snapshot === null) {
+		return ' The paginator did not answer a diagnostic query either, which means it is locked solid rather than merely slow.';
+	}
+	const parts: string[] = [];
+	if (snapshot.lastElement !== null) parts.push(`last placed ${snapshot.lastElement}`);
+	if (snapshot.nextElement !== null) parts.push(`then stuck on ${snapshot.nextElement}`);
+	if (parts.length === 0) {
+		return snapshot.lastPageChars === 0
+			? ' The last page is still empty, so it stalled before laying anything onto it at all.'
+			: ' Nothing identifiable was on the last page; see the developer console.';
+	}
+	return ` It got as far as: ${parts.join(', ')}. Full detail is in the developer console.`;
+}
 
 /**
  * Wrap each document in its `.mx-document` section.
