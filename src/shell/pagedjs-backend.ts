@@ -421,12 +421,29 @@ function paginateScript(html: string, css: string, previewChrome: boolean): stri
 	document.getElementById('mx-chrome').textContent = ${JSON.stringify(PREVIEW_CHROME_CSS)};
 	document.documentElement.style.removeProperty('--mx-preview-scale');
 
+	// Stage markers, for the watchdog to read back if this never returns.
+	//
+	// paged.js does a great deal before it lays out a single page — parses the stylesheet with
+	// csstree, walks the content, runs every handler's beforeParsed and afterParsed hooks,
+	// waits on fonts — and all of it is invisible from out here. A stall with zero pages could
+	// be any of those, and without a marker the only honest report is "it stopped". These cost
+	// nothing and turn that into a phase.
+	window.__mxStage = 'clearing';
 	document.body.innerHTML = '';
 	const source = document.createElement('div');
+	window.__mxStage = 'building-source';
 	source.innerHTML = ${JSON.stringify(html)};
+	window.__mxSourceElements = source.querySelectorAll('*').length;
+	window.__mxStage = 'creating-previewer';
 	const previewer = new window.Paged.Previewer();
 	window.__mxPreviewer = previewer;
+	// The chunker emits these as it goes; the last one recorded is how far it got.
+	previewer.on('rendering', () => { window.__mxStage = 'rendering'; });
+	previewer.on('page', () => { window.__mxStage = 'laying-out-page'; });
+	previewer.on('rendered', () => { window.__mxStage = 'rendered'; });
+	window.__mxStage = 'preview-called';
 	await previewer.preview(source, [{ 'mx-profile.css': ${JSON.stringify(css)} }], document.body);
+	window.__mxStage = 'done';
 	return true;
 })()`;
 }
@@ -524,6 +541,14 @@ interface StallSnapshot {
 	lastElement: string | null;
 	/** The element queued behind it, which is usually the one it cannot fit. */
 	nextElement: string | null;
+	/** How far the paginate script got before it stopped answering. */
+	stage: string | null;
+	/** Elements in the document being paginated — a size check, not a diagnosis. */
+	sourceElements: number | null;
+	/** Whether paged.js reached the point of building its page container. */
+	pagesAreaBuilt: boolean;
+	/** Font faces the document is still waiting on; a stuck one blocks layout entirely. */
+	fontsPending: number;
 }
 
 /**
@@ -550,11 +575,19 @@ const STALL_SNAPSHOT_SCRIPT = `(() => {
 	const last = pages[pages.length - 1];
 	const content = last ? last.querySelector('.pagedjs_page_content') : null;
 	const placed = content ? content.querySelector(':scope > *:last-child') : null;
+	let fontsPending = 0;
+	try {
+		document.fonts.forEach((face) => { if (face.status !== 'loaded' && face.status !== 'error') fontsPending++; });
+	} catch (error) { /* no font manager in this guest */ }
 	return {
 		pageCount: pages.length,
 		lastPageChars: content ? (content.textContent || '').trim().length : 0,
 		lastElement: describe(placed),
 		nextElement: describe(placed ? placed.nextElementSibling : null),
+		stage: window.__mxStage || null,
+		sourceElements: typeof window.__mxSourceElements === 'number' ? window.__mxSourceElements : null,
+		pagesAreaBuilt: Boolean(document.querySelector('.pagedjs_pages')),
+		fontsPending: fontsPending,
 	};
 })()`;
 
@@ -642,20 +675,44 @@ const DOCUMENT_START_PAGES_SCRIPT = `(() => {
 	return out;
 })()`;
 
-/** Turn a stall snapshot into the tail of an error message a user can act on. */
+/**
+ * Turn a stall snapshot into the tail of an error message a user can act on.
+ *
+ * Zero pages is a different failure from a stall part-way through, and saying so is the whole
+ * value here: paged.js creates a page element *before* it lays anything into it, so no pages at
+ * all means it never entered the layout loop. Nothing about the page content can be
+ * responsible; the cause is in what runs first — the stylesheet, the break rules applied to the
+ * parsed document, or a font that never resolves.
+ */
 function describeStall(snapshot: StallSnapshot | null): string {
 	if (snapshot === null) {
 		return ' The paginator did not answer a diagnostic query either, which means it is locked solid rather than merely slow.';
 	}
+
+	const stage = snapshot.stage === null ? '' : ` It last reported being at “${snapshot.stage}”.`;
+	const size =
+		snapshot.sourceElements === null ? '' : ` The document has ${snapshot.sourceElements} elements.`;
+
+	if (snapshot.pageCount === 0) {
+		const fonts =
+			snapshot.fontsPending > 0
+				? ` ${snapshot.fontsPending} font face${snapshot.fontsPending === 1 ? '' : 's'} never finished loading, which blocks layout on its own.`
+				: '';
+		const reached = snapshot.pagesAreaBuilt
+			? 'It built its page container but never laid out a first page'
+			: 'It never got as far as building its page container';
+		return (
+			` ${reached}, so nothing about the note's content can be the cause — the fault is in what runs` +
+			` before layout: the profile stylesheet, the break rules applied to it, or fonts.${stage}${size}${fonts}` +
+			' Turning off “Keep headings with their text” in the profile’s Page settings is the quickest thing to rule out.'
+		);
+	}
+
 	const parts: string[] = [];
 	if (snapshot.lastElement !== null) parts.push(`last placed ${snapshot.lastElement}`);
 	if (snapshot.nextElement !== null) parts.push(`then stuck on ${snapshot.nextElement}`);
-	if (parts.length === 0) {
-		return snapshot.lastPageChars === 0
-			? ' The last page is still empty, so it stalled before laying anything onto it at all.'
-			: ' Nothing identifiable was on the last page; see the developer console.';
-	}
-	return ` It got as far as: ${parts.join(', ')}. Full detail is in the developer console.`;
+	if (parts.length === 0) return ` Nothing identifiable was on the last page.${stage}${size}`;
+	return ` It got as far as: ${parts.join(', ')}.${stage} Full detail is in the developer console.`;
 }
 
 /**
