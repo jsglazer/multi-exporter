@@ -55361,12 +55361,13 @@ var FolderExportModal = class extends import_obsidian6.Modal {
     this.progressEl.setText("Ready.");
     new import_obsidian6.Setting(contentEl.createDiv({ cls: "mx-export-actions" })).addButton(
       (button) => button.setButtonText("Cancel").onClick(() => {
-        if (this.running) {
-          this.cancelled = true;
-          this.log("Cancelling after the current note\u2026");
-        } else {
+        if (!this.running) {
           this.close();
+          return;
         }
+        if (this.cancelled) return;
+        this.cancelled = true;
+        this.log("Cancelling \u2014 this can take a moment to take effect\u2026");
       })
     ).addButton(
       (button) => button.setButtonText("Export").setCta().onClick(() => {

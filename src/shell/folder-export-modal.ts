@@ -98,12 +98,18 @@ export class FolderExportModal extends Modal {
 		new Setting(contentEl.createDiv({ cls: 'mx-export-actions' }))
 			.addButton((button) =>
 				button.setButtonText('Cancel').onClick(() => {
-					if (this.running) {
-						this.cancelled = true;
-						this.log('Cancelling after the current note…');
-					} else {
+					if (!this.running) {
 						this.close();
+						return;
 					}
+					// Say it once. Cancellation is a flag the export polls, so clicking again
+					// changes nothing — and logging a line per click buried the progress list
+					// under a wall of identical messages exactly when it was worth reading.
+					if (this.cancelled) return;
+					this.cancelled = true;
+					// Accurate as of the pagination watchdog: a merged export is one pagination
+					// pass, and cancelling now stops that pass rather than waiting it out.
+					this.log('Cancelling — this can take a moment to take effect…');
 				}),
 			)
 			.addButton((button) =>
