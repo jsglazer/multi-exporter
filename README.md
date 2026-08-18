@@ -49,8 +49,10 @@ One paginated DOM feeds both the preview and the PDF writer. That property is st
 ## Features
 
 - **Export profiles — data, not code.** A profile is `{ name, stylesheet, backend, page, flags }`. There is no fixed set: create, duplicate, rename and delete them freely. `Article`, `Dataview` and `Manuscript` ship as *starting examples*, not as an enum the code branches on. Every behavioural difference reads a flag, so a profile you create is indistinguishable from one that shipped.
-- **Live preview that is the export.** Change the profile, the stylesheet, a margin or a running head and the preview re-paginates in place.
-- **Real page furniture.** `@page` margin boxes, `counter(page)` / `counter(pages)`, `@page :first`, `@page :left` / `:right` for recto/verso, `orphans` / `widows` / `break-*`.
+  Destructive changes ask first: deleting a profile names the folder defaults that go with it and the profile that inherits the default role, and **Restore example profiles** overwrites the shipped ids — so an example edited into a corner can actually be repaired — after naming exactly what it will replace. Profiles you created yourself are never candidates.
+- **Live preview that is the export.** Change the profile, the stylesheet, a margin or a running head and the preview re-paginates in place. Pagination is serialised, so switching profiles faster than a document paginates queues the work instead of racing it.
+- **Name the output.** A single-note export takes any file name in the modal, defaulting to the note's own. It is treated as a file name and not a path: sanitised to one segment, interior dots preserved, `.pdf` added exactly once.
+- **Real page furniture.** `@page` margin boxes, `counter(page)` / `counter(pages)`, `@page :first`, `@page :left` / `:right` for recto/verso, `orphans` / `widows` / `break-*`. Two named strings are supplied for you — `doctitle` and `docdate` — so a running head can carry the note's name and the export timestamp, and stays correct in a merged export where the answer changes partway down the PDF. The `Article` example uses all four boxes: note name and author over a 0.4pt head rule, `n of m` and the timestamp under a foot rule.
 - **Bulk folder export**, recursive, markdown-only, ordered alphabetically by folder hierarchy then file name:
   - **Separate** — one PDF per note, reproducing the source hierarchy on disk.
   - **Merged** — a single PDF with continuous page numbering, a combined outline, and running heads that carry across note boundaries.
@@ -71,7 +73,7 @@ Not in the community plugin store yet. Install manually or with BRAT.
 ```sh
 npm install
 npm run build      # tsc --noEmit && esbuild → main.js
-npm test           # 173 headless tests, no Obsidian required
+npm test           # 185 headless tests, no Obsidian required
 ```
 
 ## Usage
@@ -108,6 +110,8 @@ selector you would use in a CSS snippet works — `.callout`, `.dataview`, `.int
 | Selector | What it is |
 |---|---|
 | `.mx-document` | One note inside a merged export; carries `data-mx-title` and `data-mx-source` |
+| `.mx-document-first` | Also on the first note, so a leading `break-before: page` can be cancelled |
+| `.mx-doc-meta` | Zero-height block opening each note, holding `.mx-doc-title` and `.mx-doc-date` |
 | `.mx-bibliography` | The appended bibliography block, with one `div` per entry |
 | `.mx-endnotes` | The endnotes block, when the profile puts annotations there |
 | `.mx-citation` | A resolved citation link; carries `data-mx-citekey` |
@@ -133,6 +137,15 @@ thead { display: table-header-group; }
    controls as `string(chapter)`. */
 h1 { string-set: chapter content(text); }
 
+/* The note's name and the export timestamp are captured for you as `doctitle` and
+   `docdate` — put `string(doctitle)` in a margin box via the Page controls. Style the
+   boxes here; the three top boxes together span the text width, so a border on them is
+   a header rule. */
+.pagedjs_margin-top-left { font-weight: 700; }
+.pagedjs_margin-top-left,
+.pagedjs_margin-top-center,
+.pagedjs_margin-top-right { border-bottom: 0.4pt solid #000; align-items: flex-end; }
+
 /* Hide something from the export without touching the note. */
 .callout[data-callout="todo"] { display: none; }
 
@@ -146,6 +159,11 @@ a[href^="http"]::after { content: " (" attr(href) ")"; font-size: 0.85em; color:
 @page :left  { margin-right: 1.25in; }
 @page :right { margin-left: 1.25in; }
 ```
+
+One rule to leave alone: `.mx-doc-meta` is hidden by collapsing it to zero height rather
+than with `display: none`, because paged.js only reads a named string off an element it
+actually lays out onto a page. Giving it `display: none` empties `string(doctitle)` and
+`string(docdate)`, and the running head silently prints nothing.
 
 **Fonts.** Anything installed on the machine can be named directly. Web fonts are not
 fetched during pagination, so an `@import` or a remote `@font-face` will not resolve — embed
@@ -174,7 +192,7 @@ src/core/     Pure decision logic. Zero imports from `obsidian`, node `fs`, or t
 src/adapter/  The ONE module that touches undocumented internals and Electron.
 src/shell/    Obsidian/Electron implementations of the interfaces core declares.
 vendor/       Vendored, patched paged.js, with the diff checked in as a .patch.
-tests/        173 headless tests. Import only from src/core/.
+tests/        185 headless tests. Import only from src/core/.
 ```
 
 Every capability the pipeline needs — rendering, citations, image bytes, pagination, PDF surgery, disk — arrives as an injected interface, so the whole export sequence runs headlessly against fakes. Filesystem writes go through a `FileWriter`; tests inject `InMemoryFileWriter`, so a test run can never touch a real disk.
