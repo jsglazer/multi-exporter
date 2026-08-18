@@ -10,6 +10,16 @@ import type MultiExporterPlugin from './main';
 /** Canonical repository. Also `manifest.json`'s `authorUrl` owner. */
 export const REPOSITORY_URL = 'https://github.com/jsglazer/multi-exporter';
 
+/** Margin inputs, in CSS shorthand order — the order the description promises. */
+const MARGIN_EDGES = ['top', 'right', 'bottom', 'left'] as const;
+
+const EDGE_LABELS: Record<(typeof MARGIN_EDGES)[number], string> = {
+	top: 'Top',
+	right: 'Right',
+	bottom: 'Bottom',
+	left: 'Left',
+};
+
 /**
  * Settings: profile CRUD and the folder-default map.
  *
@@ -251,33 +261,25 @@ export class MultiExporterSettingTab extends PluginSettingTab {
 			});
 		});
 
-		new Setting(editor)
+		// Four inputs in one row is enough to break Obsidian's own Setting layout, so this row
+		// carries a class and lays itself out; see `.mx-margins-setting` in `styles.css`.
+		const margins = new Setting(editor)
 			.setName('Margins')
 			.setDesc('Top, right, bottom, left — any CSS length. Inches by default; mm and pt work too.')
-			.addText((text) =>
-				text.setValue(profile.page.margins.top).onChange(async (value) => {
-					profile.page.margins.top = value;
+			.setClass('mx-margins-setting');
+
+		for (const edge of MARGIN_EDGES) {
+			margins.addText((text) => {
+				text.setValue(profile.page.margins[edge]).onChange(async (value) => {
+					profile.page.margins[edge] = value;
 					await this.save();
-				}),
-			)
-			.addText((text) =>
-				text.setValue(profile.page.margins.right).onChange(async (value) => {
-					profile.page.margins.right = value;
-					await this.save();
-				}),
-			)
-			.addText((text) =>
-				text.setValue(profile.page.margins.bottom).onChange(async (value) => {
-					profile.page.margins.bottom = value;
-					await this.save();
-				}),
-			)
-			.addText((text) =>
-				text.setValue(profile.page.margins.left).onChange(async (value) => {
-					profile.page.margins.left = value;
-					await this.save();
-				}),
-			);
+				});
+				// Four identical boxes say nothing about which is which once they hold values.
+				// The order is in the description; this is what survives at a glance.
+				text.inputEl.setAttribute('title', EDGE_LABELS[edge]);
+				text.inputEl.setAttribute('aria-label', `${EDGE_LABELS[edge]} margin`);
+			});
+		}
 
 		new Setting(editor)
 			.setName('Reset page to defaults')

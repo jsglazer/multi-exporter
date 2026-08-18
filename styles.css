@@ -164,6 +164,42 @@
 	padding-bottom: var(--size-4-2);
 }
 
+/* The four margin inputs, laid out explicitly.
+
+   Obsidian sizes a Setting's control column from its children and gives the info column
+   whatever is left over. Four text inputs at their natural width leave it nothing: the info
+   column collapses to almost no width, and the description — a whole sentence — wraps to
+   roughly one character per line. The text is clipped, so the only visible symptom is a tall
+   empty band under the row, which is the blank space this fixes. Larger interface font sizes
+   make it worse, because the inputs grow and the pane does not.
+
+   So the info column gets a floor and the inputs share what remains: four equal columns that
+   can shrink (`minmax(0, 1fr)` — `1fr` alone will not shrink below content width), and the
+   whole row wraps rather than overflowing when even that is too tight. */
+.mx-margins-setting {
+	flex-wrap: wrap;
+	align-items: center;
+}
+
+.mx-margins-setting .setting-item-info {
+	flex: 1 1 14em;
+	min-width: 10em;
+}
+
+.mx-margins-setting .setting-item-control {
+	flex: 1 1 18em;
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: var(--size-4-2);
+	min-width: 0;
+}
+
+.mx-margins-setting .setting-item-control input[type='text'] {
+	width: 100%;
+	min-width: 0;
+	text-align: center;
+}
+
 .mx-stylesheet-input {
 	width: 100%;
 	min-height: 180px;

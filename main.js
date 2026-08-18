@@ -55362,6 +55362,13 @@ function confirm(app, options) {
 
 // src/settings-tab.ts
 var REPOSITORY_URL = "https://github.com/jsglazer/multi-exporter";
+var MARGIN_EDGES = ["top", "right", "bottom", "left"];
+var EDGE_LABELS = {
+  top: "Top",
+  right: "Right",
+  bottom: "Bottom",
+  left: "Left"
+};
 var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
@@ -55548,27 +55555,17 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
         await this.save();
       });
     });
-    new import_obsidian8.Setting(editor).setName("Margins").setDesc("Top, right, bottom, left \u2014 any CSS length. Inches by default; mm and pt work too.").addText(
-      (text) => text.setValue(profile.page.margins.top).onChange(async (value) => {
-        profile.page.margins.top = value;
-        await this.save();
-      })
-    ).addText(
-      (text) => text.setValue(profile.page.margins.right).onChange(async (value) => {
-        profile.page.margins.right = value;
-        await this.save();
-      })
-    ).addText(
-      (text) => text.setValue(profile.page.margins.bottom).onChange(async (value) => {
-        profile.page.margins.bottom = value;
-        await this.save();
-      })
-    ).addText(
-      (text) => text.setValue(profile.page.margins.left).onChange(async (value) => {
-        profile.page.margins.left = value;
-        await this.save();
-      })
-    );
+    const margins = new import_obsidian8.Setting(editor).setName("Margins").setDesc("Top, right, bottom, left \u2014 any CSS length. Inches by default; mm and pt work too.").setClass("mx-margins-setting");
+    for (const edge of MARGIN_EDGES) {
+      margins.addText((text) => {
+        text.setValue(profile.page.margins[edge]).onChange(async (value) => {
+          profile.page.margins[edge] = value;
+          await this.save();
+        });
+        text.inputEl.setAttribute("title", EDGE_LABELS[edge]);
+        text.inputEl.setAttribute("aria-label", `${EDGE_LABELS[edge]} margin`);
+      });
+    }
     new import_obsidian8.Setting(editor).setName("Reset page to defaults").setDesc("Restores the shipped page size, orientation, margins and furniture. Leaves the stylesheet alone.").addButton(
       (button) => button.setButtonText("Reset page").onClick(async () => {
         const template = createDefaultProfiles().find((candidate) => candidate.id === profile.id);
