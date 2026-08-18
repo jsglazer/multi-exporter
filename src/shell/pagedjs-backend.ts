@@ -297,6 +297,8 @@ const PAGE_MAP_SCRIPT = `(() => {
 })()`;
 
 interface PageDiagnostics {
+	/** The guest's own viewport. Too short here means the container never got a real box. */
+	viewport: { width: number; height: number };
 	/** Characters of text on each page, in order. A run of zeroes is the symptom. */
 	pageChars: number[];
 	/** Elements measured larger than the page's content box. */
@@ -334,7 +336,12 @@ const DIAGNOSTIC_SCRIPT = `(() => {
 			});
 		});
 	}
-	return { pageChars, oversized: oversized.slice(0, 20), contentBox };
+	return {
+		viewport: { width: window.innerWidth, height: window.innerHeight },
+		pageChars,
+		oversized: oversized.slice(0, 20),
+		contentBox,
+	};
 })()`;
 
 /** First page index of each `.mx-document` section, in document order. */

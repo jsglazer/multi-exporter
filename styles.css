@@ -4,11 +4,20 @@
 
 /* --- preview container ------------------------------------------------------------ */
 
+/* `flex: 1 1 auto` plus a definite height from the layout below.
+
+   A <webview>'s guest takes its viewport from the element's box, and an indefinite box
+   leaves the guest at the replaced-element default of ~150px — where it stays. The element
+   itself stretched fine (its border drew around the whole pane), but the page inside was
+   painted into a 150px-tall viewport, so the preview showed the top inch of page one and
+   grey below it. `min-height` on this element does not help: it sizes the element, not the
+   guest. A definite height on the ancestor does. */
 .mx-preview-container {
 	display: block;
+	flex: 1 1 auto;
 	width: 100%;
 	height: 100%;
-	min-height: 400px;
+	min-width: 0;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-s);
 	background: var(--background-secondary);
@@ -51,17 +60,21 @@
 	width: min(1100px, 92vw);
 }
 
+/* `height`, deliberately, not `min-height`: percentage heights below only resolve against a
+   definite one, and that is what gives the preview webview a real box to hand its guest. */
 .mx-export-layout {
 	display: flex;
 	gap: var(--size-4-4);
 	align-items: stretch;
-	min-height: 60vh;
+	height: 62vh;
+	min-height: 320px;
 }
 
 .mx-export-preview {
 	flex: 1 1 auto;
 	display: flex;
 	min-width: 0;
+	height: 100%;
 }
 
 .mx-export-controls {

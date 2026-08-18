@@ -38949,7 +38949,12 @@ var DIAGNOSTIC_SCRIPT = `(() => {
 			});
 		});
 	}
-	return { pageChars, oversized: oversized.slice(0, 20), contentBox };
+	return {
+		viewport: { width: window.innerWidth, height: window.innerHeight },
+		pageChars,
+		oversized: oversized.slice(0, 20),
+		contentBox,
+	};
 })()`;
 var DOCUMENT_START_PAGES_SCRIPT = `(() => {
 	const pages = Array.from(document.querySelectorAll('.pagedjs_page'));
