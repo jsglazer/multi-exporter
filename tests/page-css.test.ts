@@ -26,6 +26,7 @@ function config(overrides: Partial<PageConfig> = {}): PageConfig {
 		margins: { top: '20mm', right: '18mm', bottom: '20mm', left: '18mm' },
 		furniture: { bottomCenter: { content: 'counter(page)' } },
 		suppressFirstPageFurniture: false,
+		keepHeadingsWithText: false,
 		orphans: 2,
 		widows: 2,
 		...overrides,
@@ -178,5 +179,39 @@ describe('the Article profile furniture', () => {
 		expect(stylesheet).toContain('.pagedjs_margin-top-left');
 		expect(stylesheet).toContain('border-bottom: 0.4pt solid #000;');
 		expect(stylesheet).toContain('border-top: 0.4pt solid #000;');
+	});
+});
+
+/**
+ * Keeping a heading with the text under it.
+ *
+ * `orphans` and `widows` cannot express this — they count lines inside one block, and a
+ * stranded heading is a break *between* two blocks. paged.js implements `break-after` itself:
+ * its Breaks handler marks the heading `data-break-after` and the element after it
+ * `data-previous-break-after`, then breaks before the heading when that element overflows.
+ */
+describe('keeping headings with their text', () => {
+	it('emits break-after: avoid for every heading level when on', () => {
+		const css = buildPageCss(config({ keepHeadingsWithText: true }));
+		expect(css).toContain('h1, h2, h3, h4, h5, h6 {\n\tbreak-after: avoid;\n}');
+	});
+
+	it('emits nothing at all when off', () => {
+		expect(buildPageCss(config({ keepHeadingsWithText: false }))).not.toContain('break-after');
+	});
+
+	// The toggle is a page-break control, so it belongs with orphans and widows rather than
+	// in the profile stylesheet — which is why the shipped profiles get it without carrying
+	// a CSS rule of their own.
+	it('is on for every shipped profile', () => {
+		for (const profile of createDefaultProfiles()) {
+			expect(profile.page.keepHeadingsWithText).toBe(true);
+			expect(buildPageCss(profile.page)).toContain('break-after: avoid;');
+		}
+	});
+
+	it('still balances its braces', () => {
+		const css = buildPageCss(config({ keepHeadingsWithText: true }));
+		expect([...css].filter((c) => c === '{').length).toBe([...css].filter((c) => c === '}').length);
 	});
 });

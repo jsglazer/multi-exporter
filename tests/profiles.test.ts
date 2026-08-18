@@ -80,3 +80,51 @@ describe('normalizeSettings', () => {
 		expect(settings.profiles[0]?.page.size).toBe('A4');
 	});
 });
+
+/**
+ * A page field added after a vault has already saved its profiles.
+ *
+ * `normalizeProfile` spreads the template's page *under* the saved one, so a field that did
+ * not exist when the settings were written picks up the shipped default rather than
+ * `undefined` — no migration, no settings-version bump. This is what makes
+ * `keepHeadingsWithText` reach existing vaults switched on, and it guards the pattern for
+ * whatever page field comes next.
+ */
+describe('a page field the saved settings predate', () => {
+	it('takes the shipped default rather than undefined', () => {
+		const saved = {
+			settingsVersion: SETTINGS_VERSION,
+			profiles: [
+				{
+					id: 'article',
+					name: 'Article',
+					backendId: 'pagedjs-webview',
+					stylesheet: '',
+					cslStyle: '',
+					// Exactly what an older `data.json` holds: no `keepHeadingsWithText`.
+					page: {
+						size: 'Letter',
+						orientation: 'portrait',
+						margins: { top: '1in', right: '0.75in', bottom: '1in', left: '0.75in' },
+						furniture: {},
+						suppressFirstPageFurniture: false,
+						orphans: 2,
+						widows: 2,
+					},
+					flags: {},
+				},
+			],
+		};
+
+		const settings = normalizeSettings(saved);
+		expect(settings.profiles[0]?.page.keepHeadingsWithText).toBe(true);
+	});
+
+	it('leaves an explicit false alone', () => {
+		const settings = normalizeSettings({
+			settingsVersion: SETTINGS_VERSION,
+			profiles: [{ ...createDefaultProfiles()[0], page: { ...createDefaultProfiles()[0]?.page, keepHeadingsWithText: false } }],
+		});
+		expect(settings.profiles[0]?.page.keepHeadingsWithText).toBe(false);
+	});
+});

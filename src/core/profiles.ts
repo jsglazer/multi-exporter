@@ -32,6 +32,7 @@ function defaultPage(): PageConfig {
 		margins: { top: '1in', right: '0.75in', bottom: '1in', left: '0.75in' },
 		furniture: { bottomCenter: { content: 'counter(page)' } },
 		suppressFirstPageFurniture: false,
+		keepHeadingsWithText: true,
 		orphans: 2,
 		widows: 2,
 	};

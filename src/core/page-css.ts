@@ -88,6 +88,7 @@ export function buildPageCss(config: PageConfig): string {
 	}
 
 	blocks.push(breakControlBlock(config));
+	if (config.keepHeadingsWithText) blocks.push(KEEP_HEADINGS_CSS);
 	return blocks.join('\n\n');
 }
 
@@ -136,6 +137,20 @@ function breakControlBlock(config: PageConfig): string {
 		'}',
 	].join('\n');
 }
+
+/**
+ * Keep a heading with the text under it.
+ *
+ * paged.js implements this properly rather than leaving it to the browser: its `Breaks`
+ * handler lifts `break-after` out of the stylesheet, marks the heading `data-break-after`
+ * and the element after it `data-previous-break-after`, and when that element would overflow
+ * the page the paginator breaks before the *heading* instead — carrying both to the next
+ * page. `h1`–`h6` all the way down, so a run of consecutive headings stays together too.
+ *
+ * A profile stylesheet can opt a level back out with `break-after: auto`, because it is
+ * parsed after this and the handler applies the later selector last.
+ */
+const KEEP_HEADINGS_CSS = ['h1, h2, h3, h4, h5, h6 {', '\tbreak-after: avoid;', '}'].join('\n');
 
 function hasContent(furniture: PageFurniture): boolean {
 	return MARGIN_BOXES.some(([key]) => {

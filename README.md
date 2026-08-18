@@ -52,7 +52,7 @@ One paginated DOM feeds both the preview and the PDF writer. That property is st
   Destructive changes ask first: deleting a profile names the folder defaults that go with it and the profile that inherits the default role, and **Restore example profiles** overwrites the shipped ids — so an example edited into a corner can actually be repaired — after naming exactly what it will replace. Profiles you created yourself are never candidates.
 - **Live preview that is the export.** Change the profile, the stylesheet, a margin or a running head and the preview re-paginates in place. Pagination is serialised, so switching profiles faster than a document paginates queues the work instead of racing it.
 - **Name the output.** A single-note export takes any file name in the modal, defaulting to the note's own. It is treated as a file name and not a path: sanitised to one segment, interior dots preserved, `.pdf` added exactly once.
-- **Real page furniture.** `@page` margin boxes, `counter(page)` / `counter(pages)`, `@page :first`, `@page :left` / `:right` for recto/verso, `orphans` / `widows` / `break-*`. Two named strings are supplied for you — `doctitle` and `docdate` — so a running head can carry the note's name and the export timestamp, and stays correct in a merged export where the answer changes partway down the PDF. The `Article` example uses all four boxes: note name and author over a 0.4pt head rule, `n of m` and the timestamp under a foot rule.
+- **Real page furniture.** `@page` margin boxes, `counter(page)` / `counter(pages)`, `@page :first`, `@page :left` / `:right` for recto/verso, `orphans` / `widows` / `break-*`. **Keep headings with their text** is a Page toggle, on by default: a heading that would land at the foot of a page moves to the next one along with the paragraph under it. `orphans` and `widows` cannot express that — they count lines *inside* one block, and a stranded heading is a break *between* two. Two named strings are supplied for you — `doctitle` and `docdate` — so a running head can carry the note's name and the export timestamp, and stays correct in a merged export where the answer changes partway down the PDF. The `Article` example uses all four boxes: note name and author over a 0.4pt head rule, `n of m` and the timestamp under a foot rule.
 - **Bulk folder export**, recursive, markdown-only, ordered alphabetically by folder hierarchy then file name:
   - **Separate** — one PDF per note, reproducing the source hierarchy on disk.
   - **Merged** — a single PDF with continuous page numbering, a combined outline, and running heads that carry across note boundaries.
@@ -73,7 +73,7 @@ Not in the community plugin store yet. Install manually or with BRAT.
 ```sh
 npm install
 npm run build      # tsc --noEmit && esbuild → main.js
-npm test           # 185 headless tests, no Obsidian required
+npm test           # 191 headless tests, no Obsidian required
 ```
 
 ## Usage
@@ -122,9 +122,12 @@ selector you would use in a CSS snippet works — `.callout`, `.dataview`, `.int
 **Recipes.**
 
 ```css
-/* Start every top-level heading on a new page, and never strand it at the foot of one. */
+/* Start every top-level heading on a new page. (Never stranding one at the foot of a page
+   is the "Keep headings with their text" toggle in the Page controls — no CSS needed. To
+   opt one level back out of it, set `break-after: auto` here; your stylesheet is parsed
+   after the generated rules, so it wins.) */
 h1 { break-before: page; }
-h2, h3 { break-after: avoid; }
+h4 { break-after: auto; }
 
 /* Keep the things that must not be split, unsplit. */
 figure, blockquote, pre, table tr { break-inside: avoid; }
@@ -192,7 +195,7 @@ src/core/     Pure decision logic. Zero imports from `obsidian`, node `fs`, or t
 src/adapter/  The ONE module that touches undocumented internals and Electron.
 src/shell/    Obsidian/Electron implementations of the interfaces core declares.
 vendor/       Vendored, patched paged.js, with the diff checked in as a .patch.
-tests/        185 headless tests. Import only from src/core/.
+tests/        191 headless tests. Import only from src/core/.
 ```
 
 Every capability the pipeline needs — rendering, citations, image bytes, pagination, PDF surgery, disk — arrives as an injected interface, so the whole export sequence runs headlessly against fakes. Filesystem writes go through a `FileWriter`; tests inject `InMemoryFileWriter`, so a test run can never touch a real disk.

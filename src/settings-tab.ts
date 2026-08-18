@@ -305,6 +305,18 @@ export class MultiExporterSettingTab extends PluginSettingTab {
 				}),
 			);
 
+		new Setting(editor)
+			.setName('Keep headings with their text')
+			.setDesc(
+				'A heading that would land at the foot of a page moves to the next one along with the text under it.',
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(profile.page.keepHeadingsWithText).onChange(async (value) => {
+					profile.page.keepHeadingsWithText = value;
+					await this.save();
+				}),
+			);
+
 		new Setting(editor).setName('Behaviour').setHeading();
 
 		new Setting(editor)

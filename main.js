@@ -4422,6 +4422,7 @@ function buildPageCss(config) {
     blocks.push(furnitureBlock(":left", config.versoFurniture));
   }
   blocks.push(breakControlBlock(config));
+  if (config.keepHeadingsWithText) blocks.push(KEEP_HEADINGS_CSS);
   return blocks.join("\n\n");
 }
 function basePageBlock(config) {
@@ -4460,6 +4461,7 @@ function breakControlBlock(config) {
     "}"
   ].join("\n");
 }
+var KEEP_HEADINGS_CSS = ["h1, h2, h3, h4, h5, h6 {", "	break-after: avoid;", "}"].join("\n");
 function hasContent(furniture) {
   return MARGIN_BOXES.some(([key]) => {
     const value = furniture[key];
@@ -4480,6 +4482,7 @@ function defaultPage() {
     margins: { top: "1in", right: "0.75in", bottom: "1in", left: "0.75in" },
     furniture: { bottomCenter: { content: "counter(page)" } },
     suppressFirstPageFurniture: false,
+    keepHeadingsWithText: true,
     orphans: 2,
     widows: 2
   };
@@ -55579,6 +55582,14 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
     new import_obsidian8.Setting(editor).setName("Suppress furniture on the first page").setDesc("Emits @page :first with every margin box emptied.").addToggle(
       (toggle) => toggle.setValue(profile.page.suppressFirstPageFurniture).onChange(async (value) => {
         profile.page.suppressFirstPageFurniture = value;
+        await this.save();
+      })
+    );
+    new import_obsidian8.Setting(editor).setName("Keep headings with their text").setDesc(
+      "A heading that would land at the foot of a page moves to the next one along with the text under it."
+    ).addToggle(
+      (toggle) => toggle.setValue(profile.page.keepHeadingsWithText).onChange(async (value) => {
+        profile.page.keepHeadingsWithText = value;
         await this.save();
       })
     );

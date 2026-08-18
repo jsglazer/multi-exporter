@@ -44,6 +44,14 @@ export interface PageConfig {
 	versoFurniture?: PageFurniture;
 	/** Suppress all furniture on the first page (`@page :first`). */
 	suppressFirstPageFurniture: boolean;
+	/**
+	 * Keep a heading on the same page as the text that follows it.
+	 *
+	 * Emits `break-after: avoid` for `h1`–`h6`. `orphans` and `widows` below cannot express
+	 * this: they count lines *within* one block, and a heading stranded at the foot of a page
+	 * is a break *between* two blocks.
+	 */
+	keepHeadingsWithText: boolean;
 	orphans: number;
 	widows: number;
 }
