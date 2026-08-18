@@ -4770,14 +4770,15 @@ var READY_TIMEOUT_MS = 15e3;
 var PREVIEW_CONTAINER_CLASS = "mx-preview-container";
 var PREVIEW_OFFSCREEN_CLASS = "mx-preview-offscreen";
 function createPreviewWebview(parent, partition) {
-  const element = parent.createEl("webview", {
-    cls: PREVIEW_CONTAINER_CLASS
-  });
-  element.setAttribute("src", "about:blank");
+  const document = parent.ownerDocument;
+  const element = document.createElement("webview");
+  element.setAttribute("class", PREVIEW_CONTAINER_CLASS);
   element.setAttribute("partition", partition);
   element.setAttribute("nodeintegration", "off");
   element.setAttribute("webpreferences", "contextIsolation=no,sandbox=no,javascript=yes");
   element.setAttribute("disableblinkfeatures", "Auxclick");
+  element.setAttribute("src", "about:blank");
+  parent.appendChild(element);
   let destroyed = false;
   const readyPromise = new Promise((resolve) => {
     var _a;
@@ -5418,12 +5419,41 @@ var ObsidianImageSource = class {
    * `fs` — which keeps this working regardless of where the vault lives.
    */
   async fetchLocal(src) {
-    const vaultPath = toVaultPath(src);
-    if (vaultPath === null) return null;
-    const file = this.app.vault.getFileByPath(vaultPath);
+    const file = this.resolveFile(src);
     if (file === null) return null;
     const bytes = new Uint8Array(await this.app.vault.readBinary(file));
-    return { mimeType: guessImageMimeType(vaultPath), bytes };
+    return { mimeType: guessImageMimeType(file.path), bytes };
+  }
+  /**
+   * Find the vault file a rendered `src` refers to.
+   *
+   * The path inside an `app://` URL is **OS-absolute**, not vault-relative, so handing it
+   * straight to `getFileByPath` never matched: every vault image failed silently and was
+   * replaced by the transparent placeholder — in the PDF as well as the preview, which is
+   * a picture that is simply missing rather than an error anyone would notice. Three
+   * attempts, cheapest first: the path as given, the path with the vault's own base
+   * directory removed, then the file name resolved the way a link would resolve it.
+   */
+  resolveFile(src) {
+    const path = toVaultPath(src);
+    if (path === null) return null;
+    const direct = this.app.vault.getFileByPath(path);
+    if (direct !== null) return direct;
+    const base = this.vaultBasePath();
+    const absolute = path.startsWith("/") ? path : `/${path}`;
+    if (base !== null && absolute.startsWith(`${base}/`)) {
+      const relative = this.app.vault.getFileByPath(absolute.slice(base.length + 1));
+      if (relative !== null) return relative;
+    }
+    const name = absolute.slice(absolute.lastIndexOf("/") + 1);
+    return name === "" ? null : this.app.metadataCache.getFirstLinkpathDest(name, "");
+  }
+  /** The vault's directory on disk, or `null` when the vault is not on a filesystem. */
+  vaultBasePath() {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof import_obsidian.FileSystemAdapter)) return null;
+    const base = adapter.getBasePath();
+    return base.endsWith("/") ? base.slice(0, -1) : base;
   }
 };
 function toVaultPath(src) {
@@ -38764,9 +38794,7 @@ var PagedJsWebviewBackend = class {
     };
     if (cancelled()) throw new ExportCancelled();
     await this.ensurePolyfill(webview);
-    const html = request.documents.map(
-      (document, index) => `<section class="mx-document" data-mx-index="${index}" data-mx-source="${escapeAttribute(document.sourcePath)}" data-mx-title="${escapeAttribute(document.title)}">${document.html}</section>`
-    ).join("\n");
+    const html = wrapDocumentSections(request.documents);
     (_a = request.onProgress) == null ? void 0 : _a.call(request, 0.1, "Paginating");
     await webview.run(paginateScript(html, request.css, false));
     if (cancelled()) throw new ExportCancelled();
@@ -38970,6 +38998,11 @@ var DOCUMENT_START_PAGES_SCRIPT = `(() => {
 	for (let i = 0; i <= max; i++) out.push(starts.has(i) ? starts.get(i) : 0);
 	return out;
 })()`;
+function wrapDocumentSections(documents) {
+  return documents.map(
+    (document, index) => `<section class="mx-document" data-mx-index="${index}" data-mx-source="${escapeAttribute(document.sourcePath)}" data-mx-title="${escapeAttribute(document.title)}">${document.html}</section>`
+  ).join("\n");
+}
 function escapeAttribute(value) {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -54669,6 +54702,43 @@ var ExportService = class {
   createRenderHost() {
     return activeDocument.body.createDiv({ cls: RENDER_HOST_ROOT_CLASS });
   }
+  /**
+   * Prepare a single note exactly as an export would: citations, image inlining and
+   * annotations, in that order, against a throwaway render host.
+   *
+   * This is what the preview calls. It renders the note *and runs the transforms*, because
+   * a preview that skips image inlining shows broken `app://` images that no export would
+   * ever contain — the guest webview has its own session and cannot load them.
+   */
+  async prepareDocument(sourcePath, title, profile) {
+    const settings = this.getSettings();
+    const report = new ExportReport();
+    const host = this.createRenderHost();
+    try {
+      const gate = await resolveCitationGate(this.app, profile.flags.resolveCitations);
+      if (gate.reason !== "ok") {
+        report.once("warning", `citations-${gate.reason}`, describeGateReason(gate.reason));
+      }
+      const citeKeys = gate.provider.available ? await gate.provider.getAllCiteKeys() : /* @__PURE__ */ new Set();
+      const deps = {
+        renderer: new ObsidianDocumentRenderer(this.app, host),
+        citations: gate.provider,
+        images: new ObsidianImageSource(this.app),
+        transforms: this.transforms,
+        annotationClasses: MD_ANNOTATION_CLASSES,
+        imageFetchTimeoutMs: settings.imageFetchTimeoutMs
+      };
+      const prepared = await prepareDocument(
+        { sourcePath, profile, destination: null, title },
+        citeKeys,
+        deps,
+        report
+      );
+      return { note: prepared, report };
+    } finally {
+      host.detach();
+    }
+  }
   async run(options) {
     var _a;
     const settings = this.getSettings();
@@ -54816,31 +54886,33 @@ var ExportModal = class extends import_obsidian5.Modal {
   /**
    * Render the note and paginate it into the preview container.
    *
-   * Runs the same transforms the export runs, so what is on screen is what would print.
+   * Goes through the service's own document preparation — the same citations, image
+   * inlining and annotation handling the export runs, wrapped in the same
+   * `.mx-document` section — so what is on screen is what would print. Rendering and
+   * serialising here directly, as this used to, silently skipped every transform: vault
+   * images stayed `app://` URLs the guest webview cannot load, and the preview showed
+   * broken images no export would ever produce.
    */
   async repaginate() {
     const backend = this.backend;
     if (backend === null || this.exporting) return;
     this.setStatus("Rendering\u2026");
-    const host = this.service.createRenderHost();
-    const renderer = new ObsidianDocumentRenderer(this.app, host);
-    const transforms = new DomTransforms();
     try {
-      const note = await renderer.render(this.file.path);
-      const html = transforms.serialize(note);
-      renderer.release(note);
+      const prepared = await this.service.prepareDocument(this.file.path, this.file.basename, this.profile);
       this.setStatus("Paginating\u2026");
       const result = await backend.paginate({
-        html,
+        html: wrapDocumentSections([prepared.note]),
         css: composeCss(this.profile),
         page: this.profile.page
       });
-      this.setStatus(`${result.pageCount} page${result.pageCount === 1 ? "" : "s"}.`);
+      const warnings = prepared.report.warnings.length + prepared.report.errors.length;
+      if (warnings > 0) console.warn("[multi-exporter] preview report", prepared.report.toLines());
+      this.setStatus(
+        `${result.pageCount} page${result.pageCount === 1 ? "" : "s"}.` + (warnings === 0 ? "" : ` ${warnings} warning${warnings === 1 ? "" : "s"} \u2014 see the console.`)
+      );
     } catch (error2) {
       console.error("[multi-exporter] preview failed", error2);
       this.setStatus(`Preview failed: ${describeError(error2)}`);
-    } finally {
-      host.detach();
     }
   }
   async export() {

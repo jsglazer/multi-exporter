@@ -12,8 +12,12 @@
    painted into a 150px-tall viewport, so the preview showed the top inch of page one and
    grey below it. `min-height` on this element does not help: it sizes the element, not the
    guest. A definite height on the ancestor does. */
+/* NEVER `display: block` here. Electron's <webview> uses `display: flex` internally so its
+   shadow-DOM child fills the element; overriding that leaves the element stretching while
+   the guest keeps the replaced-element default of 300x150 — which is exactly what made the
+   preview paint the top inch of page one into a full-height box. */
 .mx-preview-container {
-	display: block;
+	display: flex;
 	flex: 1 1 auto;
 	width: 100%;
 	height: 100%;

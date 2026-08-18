@@ -260,13 +260,29 @@ function headingsForDocument(
 }
 
 /**
+ * What `prepareDocument` needs, which is strictly less than a whole pipeline.
+ *
+ * Named so the preview can run the identical preparation without inventing a backend, a
+ * writer, an outline injector and a compressor it has no use for.
+ */
+export type DocumentPrepDeps = Pick<
+	PipelineDeps,
+	'renderer' | 'citations' | 'images' | 'transforms' | 'annotationClasses' | 'imageFetchTimeoutMs'
+>;
+
+/**
  * Render one note and run every pre-pagination transform over it, in the order the
  * architecture specifies: citations, then images, then annotations.
+ *
+ * Exported because **the preview must run this too**. A preview that renders and serialises
+ * without inlining images shows broken images the export would never produce — the drift
+ * this plugin exists to eliminate, reintroduced in the one place that advertises its
+ * absence.
  */
-async function prepareDocument(
+export async function prepareDocument(
 	note: PlannedNote,
 	citeKeySet: ReadonlySet<string>,
-	deps: PipelineDeps,
+	deps: DocumentPrepDeps,
 	report: ExportReport,
 ): Promise<RenderedDocument> {
 	const rendered = await deps.renderer.render(note.sourcePath);

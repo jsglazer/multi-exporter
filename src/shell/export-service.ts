@@ -1,9 +1,10 @@
 import { Notice } from 'obsidian';
 import type { App } from 'obsidian';
 import { MD_ANNOTATION_CLASSES } from '../adapter/obsidian-internals';
+import type { RenderedDocument } from '../core/backend';
 import type { ExportPlan } from '../core/export-plan';
-import { runExport } from '../core/pipeline';
-import type { PipelineDeps, PipelineOutcome } from '../core/pipeline';
+import { prepareDocument, runExport } from '../core/pipeline';
+import type { DocumentPrepDeps, PipelineDeps, PipelineOutcome } from '../core/pipeline';
 import { ExportReport } from '../core/report';
 import type { PluginSettings, Profile } from '../core/types';
 import { NodeFileWriter } from './fs-writer';
@@ -65,6 +66,48 @@ export class ExportService {
 	 */
 	createRenderHost(): HTMLElement {
 		return activeDocument.body.createDiv({ cls: RENDER_HOST_ROOT_CLASS });
+	}
+
+	/**
+	 * Prepare a single note exactly as an export would: citations, image inlining and
+	 * annotations, in that order, against a throwaway render host.
+	 *
+	 * This is what the preview calls. It renders the note *and runs the transforms*, because
+	 * a preview that skips image inlining shows broken `app://` images that no export would
+	 * ever contain — the guest webview has its own session and cannot load them.
+	 */
+	async prepareDocument(
+		sourcePath: string,
+		title: string,
+		profile: Profile,
+	): Promise<{ note: RenderedDocument; report: ExportReport }> {
+		const settings = this.getSettings();
+		const report = new ExportReport();
+		const host = this.createRenderHost();
+		try {
+			const gate = await resolveCitationGate(this.app, profile.flags.resolveCitations);
+			if (gate.reason !== 'ok') {
+				report.once('warning', `citations-${gate.reason}`, describeGateReason(gate.reason));
+			}
+			const citeKeys = gate.provider.available ? await gate.provider.getAllCiteKeys() : new Set<string>();
+			const deps: DocumentPrepDeps = {
+				renderer: new ObsidianDocumentRenderer(this.app, host),
+				citations: gate.provider,
+				images: new ObsidianImageSource(this.app),
+				transforms: this.transforms,
+				annotationClasses: MD_ANNOTATION_CLASSES,
+				imageFetchTimeoutMs: settings.imageFetchTimeoutMs,
+			};
+			const prepared = await prepareDocument(
+				{ sourcePath, profile, destination: null, title },
+				citeKeys,
+				deps,
+				report,
+			);
+			return { note: prepared, report };
+		} finally {
+			host.detach();
+		}
 	}
 
 	async run(options: ExportRunOptions): Promise<PipelineOutcome> {

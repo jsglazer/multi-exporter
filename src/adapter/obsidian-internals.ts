@@ -274,15 +274,21 @@ export interface PreviewWebview {
  * plugin removal, so `destroy()` is wired to both modal close and plugin unload.
  */
 export function createPreviewWebview(parent: HTMLElement, partition: string): PreviewWebview {
-	const element = parent.createEl('webview' as keyof HTMLElementTagNameMap, {
-		cls: PREVIEW_CONTAINER_CLASS,
-	}) as unknown as WebviewTagLike;
+	// Built detached and configured *before* it is attached, and `src` is set last.
+	// A webview begins navigating the moment it has a src in the document, and after that
+	// Electron refuses every session-shaping attribute: "The object has already navigated,
+	// so its partition cannot be changed." The old order set `src` first and threw that on
+	// every open, leaving the guest in the default session rather than ours.
+	const document = parent.ownerDocument;
+	const element = document.createElement('webview' as keyof HTMLElementTagNameMap) as unknown as WebviewTagLike;
 
-	element.setAttribute('src', 'about:blank');
+	element.setAttribute('class', PREVIEW_CONTAINER_CLASS);
 	element.setAttribute('partition', partition);
 	element.setAttribute('nodeintegration', 'off');
 	element.setAttribute('webpreferences', 'contextIsolation=no,sandbox=no,javascript=yes');
 	element.setAttribute('disableblinkfeatures', 'Auxclick');
+	element.setAttribute('src', 'about:blank');
+	parent.appendChild(element as unknown as HTMLElement);
 
 	let destroyed = false;
 

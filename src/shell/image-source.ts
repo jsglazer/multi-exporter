@@ -1,5 +1,5 @@
-import { requestUrl } from 'obsidian';
-import type { App } from 'obsidian';
+import { FileSystemAdapter, requestUrl } from 'obsidian';
+import type { App, TFile } from 'obsidian';
 import { guessImageMimeType } from '../core/image-inline';
 import type { FetchedImage, ImageSource } from '../core/image-inline';
 
@@ -48,14 +48,47 @@ export class ObsidianImageSource implements ImageSource {
 	 * `fs` — which keeps this working regardless of where the vault lives.
 	 */
 	private async fetchLocal(src: string): Promise<FetchedImage | null> {
-		const vaultPath = toVaultPath(src);
-		if (vaultPath === null) return null;
-
-		const file = this.app.vault.getFileByPath(vaultPath);
+		const file = this.resolveFile(src);
 		if (file === null) return null;
 
 		const bytes = new Uint8Array(await this.app.vault.readBinary(file));
-		return { mimeType: guessImageMimeType(vaultPath), bytes };
+		return { mimeType: guessImageMimeType(file.path), bytes };
+	}
+
+	/**
+	 * Find the vault file a rendered `src` refers to.
+	 *
+	 * The path inside an `app://` URL is **OS-absolute**, not vault-relative, so handing it
+	 * straight to `getFileByPath` never matched: every vault image failed silently and was
+	 * replaced by the transparent placeholder — in the PDF as well as the preview, which is
+	 * a picture that is simply missing rather than an error anyone would notice. Three
+	 * attempts, cheapest first: the path as given, the path with the vault's own base
+	 * directory removed, then the file name resolved the way a link would resolve it.
+	 */
+	private resolveFile(src: string): TFile | null {
+		const path = toVaultPath(src);
+		if (path === null) return null;
+
+		const direct = this.app.vault.getFileByPath(path);
+		if (direct !== null) return direct;
+
+		const base = this.vaultBasePath();
+		const absolute = path.startsWith('/') ? path : `/${path}`;
+		if (base !== null && absolute.startsWith(`${base}/`)) {
+			const relative = this.app.vault.getFileByPath(absolute.slice(base.length + 1));
+			if (relative !== null) return relative;
+		}
+
+		const name = absolute.slice(absolute.lastIndexOf('/') + 1);
+		return name === '' ? null : this.app.metadataCache.getFirstLinkpathDest(name, '');
+	}
+
+	/** The vault's directory on disk, or `null` when the vault is not on a filesystem. */
+	private vaultBasePath(): string | null {
+		const adapter = this.app.vault.adapter;
+		if (!(adapter instanceof FileSystemAdapter)) return null;
+		const base = adapter.getBasePath();
+		return base.endsWith('/') ? base.slice(0, -1) : base;
 	}
 }
 

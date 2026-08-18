@@ -8,6 +8,7 @@ import type {
 	ExportResult,
 	PaginateRequest,
 	PaginateResult,
+	RenderedDocument,
 } from '../core/backend';
 import { PAGEDJS_BACKEND_ID } from '../core/profiles';
 
@@ -80,12 +81,7 @@ export class PagedJsWebviewBackend implements ExportBackend {
 		// Merged export is one document: the notes are concatenated *before* pagination, so
 		// page numbering is continuous and running heads carry across note boundaries by
 		// construction rather than by stitching PDFs together afterwards.
-		const html = request.documents
-			.map(
-				(document, index) =>
-					`<section class="mx-document" data-mx-index="${index}" data-mx-source="${escapeAttribute(document.sourcePath)}" data-mx-title="${escapeAttribute(document.title)}">${document.html}</section>`,
-			)
-			.join('\n');
+		const html = wrapDocumentSections(request.documents);
 
 		request.onProgress?.(0.1, 'Paginating');
 		// `false`: no preview chrome and no fit transform, so what Chromium prints is the
@@ -359,6 +355,21 @@ const DOCUMENT_START_PAGES_SCRIPT = `(() => {
 	for (let i = 0; i <= max; i++) out.push(starts.has(i) ? starts.get(i) : 0);
 	return out;
 })()`;
+
+/**
+ * Wrap each document in its `.mx-document` section.
+ *
+ * Exported so the preview wraps identically: a stylesheet that targets `.mx-document` must
+ * see the same tree on screen as in the PDF.
+ */
+export function wrapDocumentSections(documents: readonly RenderedDocument[]): string {
+	return documents
+		.map(
+			(document, index) =>
+				`<section class="mx-document" data-mx-index="${index}" data-mx-source="${escapeAttribute(document.sourcePath)}" data-mx-title="${escapeAttribute(document.title)}">${document.html}</section>`,
+		)
+		.join('\n');
+}
 
 function escapeAttribute(value: string): string {
 	return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

@@ -1,6 +1,6 @@
 {
 	"name": "multi-exporter",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"description": "Export Obsidian notes to PDF with CSS Paged Media: the live preview is the paginated output.",
 	"main": "main.js",
 	"type": "module",

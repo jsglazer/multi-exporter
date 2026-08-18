@@ -6,9 +6,7 @@ import { composeCss } from '../core/pipeline';
 import { resolveProfileForPath } from '../core/profile-resolver';
 import type { PluginSettings, Profile } from '../core/types';
 import { announceOutcome, ExportService } from './export-service';
-import { PagedJsWebviewBackend } from './pagedjs-backend';
-import { ObsidianDocumentRenderer } from './render';
-import { DomTransforms } from './transforms';
+import { PagedJsWebviewBackend, wrapDocumentSections } from './pagedjs-backend';
 
 /**
  * Single-note export, with the live preview.
@@ -83,32 +81,35 @@ export class ExportModal extends Modal {
 	/**
 	 * Render the note and paginate it into the preview container.
 	 *
-	 * Runs the same transforms the export runs, so what is on screen is what would print.
+	 * Goes through the service's own document preparation — the same citations, image
+	 * inlining and annotation handling the export runs, wrapped in the same
+	 * `.mx-document` section — so what is on screen is what would print. Rendering and
+	 * serialising here directly, as this used to, silently skipped every transform: vault
+	 * images stayed `app://` URLs the guest webview cannot load, and the preview showed
+	 * broken images no export would ever produce.
 	 */
 	private async repaginate(): Promise<void> {
 		const backend = this.backend;
 		if (backend === null || this.exporting) return;
 		this.setStatus('Rendering…');
 
-		const host = this.service.createRenderHost();
-		const renderer = new ObsidianDocumentRenderer(this.app, host);
-		const transforms = new DomTransforms();
 		try {
-			const note = await renderer.render(this.file.path);
-			const html = transforms.serialize(note);
-			renderer.release(note);
+			const prepared = await this.service.prepareDocument(this.file.path, this.file.basename, this.profile);
 			this.setStatus('Paginating…');
 			const result = await backend.paginate({
-				html,
+				html: wrapDocumentSections([prepared.note]),
 				css: composeCss(this.profile),
 				page: this.profile.page,
 			});
-			this.setStatus(`${result.pageCount} page${result.pageCount === 1 ? '' : 's'}.`);
+			const warnings = prepared.report.warnings.length + prepared.report.errors.length;
+			if (warnings > 0) console.warn('[multi-exporter] preview report', prepared.report.toLines());
+			this.setStatus(
+				`${result.pageCount} page${result.pageCount === 1 ? '' : 's'}.` +
+					(warnings === 0 ? '' : ` ${warnings} warning${warnings === 1 ? '' : 's'} — see the console.`),
+			);
 		} catch (error) {
 			console.error('[multi-exporter] preview failed', error);
 			this.setStatus(`Preview failed: ${describeError(error)}`);
-		} finally {
-			host.detach();
 		}
 	}
 
