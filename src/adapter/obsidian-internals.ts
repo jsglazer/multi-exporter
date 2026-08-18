@@ -97,8 +97,12 @@ export const MD_ANNOTATION_CLASSES: AnnotationClassNames = {
  * Electron's file dialogs, reached through the renderer's `remote` bridge.
  *
  * Undocumented from Obsidian's point of view and version-sensitive, hence its presence
- * here. Every entry point returns `null` rather than throwing, so a dialog that cannot be
- * opened cancels the export instead of breaking it.
+ * here. Obsidian patches `remote` back onto the `electron` module from `@electron/remote`
+ * when it is missing, so both spellings are tried before giving up.
+ *
+ * `null` means **the user cancelled**. A bridge that cannot be reached at all throws
+ * `DialogUnavailableError` instead: silently returning `null` there made a broken export
+ * indistinguishable from a cancelled one — no file, no error, no clue.
  */
 interface ElectronDialog {
 	showSaveDialog(options: SaveDialogOptions): Promise<{ canceled: boolean; filePath?: string }>;
@@ -107,6 +111,15 @@ interface ElectronDialog {
 
 interface ElectronDialogBridge {
 	remote?: { dialog?: ElectronDialog };
+	dialog?: ElectronDialog;
+}
+
+/** Raised when Electron's dialog bridge cannot be reached; never raised on cancel. */
+export class DialogUnavailableError extends Error {
+	constructor() {
+		super("Electron's file dialog could not be reached, so there was nowhere to write the export.");
+		this.name = 'DialogUnavailableError';
+	}
 }
 
 interface SaveDialogOptions {
@@ -121,20 +134,23 @@ interface OpenDialogOptions {
 	properties: ('openDirectory' | 'createDirectory')[];
 }
 
-function dialogBridge(): ElectronDialog | null {
-	try {
-		// eslint-disable-next-line @typescript-eslint/no-require-imports
-		const electron = require('electron') as ElectronDialogBridge;
-		return electron.remote?.dialog ?? null;
-	} catch {
-		return null;
+function dialogBridge(): ElectronDialog {
+	for (const moduleId of ['electron', '@electron/remote']) {
+		try {
+			// eslint-disable-next-line @typescript-eslint/no-require-imports
+			const module = require(moduleId) as ElectronDialogBridge;
+			const dialog = module.remote?.dialog ?? module.dialog;
+			if (dialog !== undefined) return dialog;
+		} catch {
+			// Try the next spelling; only exhausting both is a failure.
+		}
 	}
+	throw new DialogUnavailableError();
 }
 
-/** Prompt for the merged-export output filename. `null` if cancelled or unavailable. */
+/** Prompt for the merged-export output filename. `null` only if the user cancelled. */
 export async function showPdfSaveDialog(title: string, defaultPath: string): Promise<string | null> {
 	const dialog = dialogBridge();
-	if (dialog === null) return null;
 	const result = await dialog.showSaveDialog({
 		title,
 		defaultPath,
@@ -143,10 +159,9 @@ export async function showPdfSaveDialog(title: string, defaultPath: string): Pro
 	return result.canceled || result.filePath === undefined ? null : result.filePath;
 }
 
-/** Prompt for an output directory. `null` if cancelled or unavailable. */
+/** Prompt for an output directory. `null` only if the user cancelled. */
 export async function showDirectoryDialog(title: string, defaultPath: string): Promise<string | null> {
 	const dialog = dialogBridge();
-	if (dialog === null) return null;
 	const result = await dialog.showOpenDialog({
 		title,
 		...(defaultPath === '' ? {} : { defaultPath }),
@@ -169,6 +184,8 @@ export interface WebviewTagLike {
 	executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>;
 	printToPDF(options: PrintToPdfOptions): Promise<Uint8Array>;
 	getWebContentsId(): number;
+	/** False once the guest page has finished loading; absent on a detached element. */
+	isLoading?(): boolean;
 	setAttribute(name: string, value: string): void;
 	addEventListener(type: 'dom-ready', listener: () => void): void;
 	removeEventListener(type: 'dom-ready', listener: () => void): void;
@@ -184,6 +201,13 @@ export interface PrintToPdfOptions {
 	landscape?: boolean;
 	scale?: number;
 }
+
+/**
+ * How long to wait for the guest page's `dom-ready` before proceeding regardless.
+ *
+ * Generous by an order of magnitude: an `about:blank` guest is ready in milliseconds.
+ */
+const READY_TIMEOUT_MS = 15000;
 
 /** Class marking the container; styling lives in `styles.css`. */
 export const PREVIEW_CONTAINER_CLASS = 'mx-preview-container';
@@ -232,18 +256,40 @@ export function createPreviewWebview(parent: HTMLElement, partition: string): Pr
 	element.setAttribute('disableblinkfeatures', 'Auxclick');
 
 	let destroyed = false;
-	let readyPromise: Promise<void> | null = null;
 
-	const ready = (): Promise<void> => {
-		readyPromise ??= new Promise<void>((resolve) => {
-			const onReady = (): void => {
-				element.removeEventListener('dom-ready', onReady);
-				resolve();
-			};
-			element.addEventListener('dom-ready', onReady);
-		});
-		return readyPromise;
-	};
+	/**
+	 * Subscribed **here, synchronously at creation** — never lazily on first use.
+	 *
+	 * `dom-ready` is a one-shot event on an `about:blank` guest and it fires within a few
+	 * milliseconds of attachment. A listener added later — after a note has been rendered,
+	 * say — misses it, and the promise then never settles: every `run()` and `printToPdf()`
+	 * on this webview hangs forever, with no error to report. The export appearing to do
+	 * nothing at all, rather than failing, is that race.
+	 */
+	const readyPromise = new Promise<void>((resolve) => {
+		let settled = false;
+		const settle = (): void => {
+			if (settled) return;
+			settled = true;
+			element.removeEventListener('dom-ready', onReady);
+			window.clearTimeout(timer);
+			resolve();
+		};
+		const onReady = (): void => settle();
+		element.addEventListener('dom-ready', onReady);
+
+		// Belt and braces: if the guest had already loaded before this ran, or the event is
+		// never delivered at all, fall through rather than hang. `executeJavaScript` then
+		// either works or throws a real error, and either beats waiting forever.
+		const timer = window.setTimeout(() => {
+			console.warn('[multi-exporter] webview dom-ready did not fire within %dms; continuing.', READY_TIMEOUT_MS);
+			settle();
+		}, READY_TIMEOUT_MS);
+
+		if (element.isLoading?.() === false) settle();
+	});
+
+	const ready = (): Promise<void> => readyPromise;
 
 	return {
 		element,

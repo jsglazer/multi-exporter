@@ -10,7 +10,7 @@ import { inlineImages } from './image-inline';
 import type { ImageSource, ImageSubstitution } from './image-inline';
 import { buildOutline, mergeDocumentOutlines } from './outline';
 import type { HeadingRef, OutlineNode } from './outline';
-import { buildPageCss } from './page-css';
+import { BASE_DOCUMENT_CSS, buildPageCss } from './page-css';
 import { ExportReport } from './report';
 import type { ExportItem, FileWriter } from './writer';
 import { writeExportItems } from './writer';
@@ -307,9 +307,12 @@ async function prepareDocument(
 	}
 }
 
-/** Profile stylesheet plus the generated `@page` rules. Profile CSS wins by coming last. */
+/**
+ * The full stylesheet for an export, in cascade order: normalisation, then the generated
+ * `@page` rules, then the profile's own CSS. The profile wins every tie by coming last.
+ */
 export function composeCss(profile: Profile): string {
-	return `${buildPageCss(profile.page)}\n\n${profile.stylesheet}`;
+	return `${BASE_DOCUMENT_CSS}\n\n${buildPageCss(profile.page)}\n\n${profile.stylesheet}`;
 }
 
 async function compressAll(

@@ -43,7 +43,19 @@ export class ExportService {
 	constructor(
 		private readonly app: App,
 		private readonly getSettings: () => PluginSettings,
+		private readonly persist: () => Promise<void>,
 	) {}
+
+	/**
+	 * Persist the settings object the modals mutate.
+	 *
+	 * `lastExportDir` is written by whichever modal ran the export, and without this it only
+	 * ever lived until the next reload — the directory picker reopened at the vault root
+	 * every single time.
+	 */
+	async saveSettings(): Promise<void> {
+		await this.persist();
+	}
 
 	/**
 	 * Off-screen host for rendering notes into DOM, attached to the document body.

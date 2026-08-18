@@ -22,7 +22,11 @@ export default class MultiExporterPlugin extends Plugin {
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
-		this.service = new ExportService(this.app, () => this.settings);
+		this.service = new ExportService(
+			this.app,
+			() => this.settings,
+			() => this.saveSettings(),
+		);
 
 		this.addSettingTab(new MultiExporterSettingTab(this.app, this));
 

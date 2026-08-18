@@ -6,6 +6,9 @@ import { createDefaultProfiles, duplicateProfile, makeProfileId } from './core/p
 import type { AnnotationMode, PageSize, Profile } from './core/types';
 import type MultiExporterPlugin from './main';
 
+/** Canonical repository. Also `manifest.json`'s `authorUrl` owner. */
+export const REPOSITORY_URL = 'https://github.com/jsglazer/multi-exporter';
+
 /**
  * Settings: profile CRUD and the folder-default map.
  *
@@ -28,10 +31,26 @@ export class MultiExporterSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
+		this.renderHeader(containerEl);
 		this.renderProfileList(containerEl);
 		this.renderProfileEditor(containerEl);
 		this.renderFolderDefaults(containerEl);
 		this.renderGeneral(containerEl);
+	}
+
+	/** Repository link, first thing on the page — where the docs and the issues live. */
+	private renderHeader(containerEl: HTMLElement): void {
+		const header = containerEl.createDiv({ cls: 'mx-settings-header' });
+		const link = header.createEl('a', {
+			cls: 'mx-settings-link',
+			text: 'Multi Exporter on GitHub',
+			href: REPOSITORY_URL,
+		});
+		link.setAttribute('rel', 'noopener');
+		header.createSpan({
+			cls: 'mx-settings-header-note',
+			text: 'Documentation, stylesheet recipes and issues.',
+		});
 	}
 
 	private get settings(): MultiExporterPlugin['settings'] {
@@ -178,7 +197,7 @@ export class MultiExporterSettingTab extends PluginSettingTab {
 
 		new Setting(editor)
 			.setName('Margins')
-			.setDesc('Top, right, bottom, left — any CSS length.')
+			.setDesc('Top, right, bottom, left — any CSS length. Inches by default; mm and pt work too.')
 			.addText((text) =>
 				text.setValue(profile.page.margins.top).onChange(async (value) => {
 					profile.page.margins.top = value;

@@ -105,6 +105,7 @@ export class ExportModal extends Modal {
 			});
 			this.setStatus(`${result.pageCount} page${result.pageCount === 1 ? '' : 's'}.`);
 		} catch (error) {
+			console.error('[multi-exporter] preview failed', error);
 			this.setStatus(`Preview failed: ${describeError(error)}`);
 		} finally {
 			host.detach();
@@ -113,7 +114,16 @@ export class ExportModal extends Modal {
 
 	private async export(): Promise<void> {
 		if (this.exporting) return;
-		const outputDir = await showDirectoryDialog('Export to folder', this.settings.lastExportDir);
+
+		let outputDir: string | null;
+		try {
+			outputDir = await showDirectoryDialog('Export to folder', this.settings.lastExportDir);
+		} catch (error) {
+			// A dialog that could not be opened is a failure, not a cancellation. Saying so
+			// out loud is the difference between a bug report and a mystery.
+			this.fail(error);
+			return;
+		}
 		if (outputDir === null) return;
 
 		this.exporting = true;
@@ -131,16 +141,34 @@ export class ExportModal extends Modal {
 			const note = plan.notes[0];
 			if (note !== undefined) note.destination = singleNoteDestination(outputDir, this.file.path);
 
-			const outcome = await this.service.run({ plan, profileFallback: this.profile });
+			// The preview's own backend does the printing. That is the guarantee this modal
+			// exists to keep: the container on screen is the container that prints, so there
+			// is no second pagination pass to drift from what was reviewed — and no second
+			// webview whose renderer process has to be spun up and torn down.
+			const outcome = await this.service.run({
+				plan,
+				profileFallback: this.profile,
+				...(this.backend === null ? {} : { backend: this.backend }),
+			});
 			announceOutcome(outcome);
 			this.settings.lastExportDir = outputDir;
-			this.setStatus(outcome.written[0] ?? 'Nothing written.');
+			void this.service.saveSettings();
+
+			const written = outcome.written[0];
+			this.setStatus(written ?? 'Nothing written.');
+			// Close on success only: a failure leaves the modal up so its message can be read.
+			if (written !== undefined && !outcome.cancelled) this.close();
 		} catch (error) {
-			new Notice(`Export failed: ${describeError(error)}`);
-			this.setStatus(`Export failed: ${describeError(error)}`);
+			this.fail(error);
 		} finally {
 			this.exporting = false;
 		}
+	}
+
+	private fail(error: unknown): void {
+		console.error('[multi-exporter] export failed', error);
+		new Notice(`Export failed: ${describeError(error)}`);
+		this.setStatus(`Export failed: ${describeError(error)}`);
 	}
 
 	private setStatus(text: string): void {

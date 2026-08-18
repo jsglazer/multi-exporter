@@ -13,13 +13,41 @@ import type { MarginBoxContent, PageConfig, PageFurniture, PageSize } from './ty
  * which is what makes it testable without a browser.
  */
 
+/**
+ * Insertion order is the order of the settings dropdown, so the US sizes lead: this plugin
+ * is authored against Letter, and the ISO sizes keep their millimetre definitions because
+ * that is what they are — a Letter default does not make A4 210mm stop being 210mm.
+ */
 export const PAGE_SIZES: Record<PageSize, { width: string; height: string }> = {
-	A4: { width: '210mm', height: '297mm' },
-	A5: { width: '148mm', height: '210mm' },
 	Letter: { width: '8.5in', height: '11in' },
 	Legal: { width: '8.5in', height: '14in' },
 	Tabloid: { width: '11in', height: '17in' },
+	A4: { width: '210mm', height: '297mm' },
+	A5: { width: '148mm', height: '210mm' },
 };
+
+/**
+ * Normalisation applied to every export, ahead of the profile stylesheet.
+ *
+ * Obsidian's rendered DOM is laid out for a viewport that scrolls; a page cannot. Anything
+ * that arrives wider or taller than the page box — a full-resolution image, a MathJax SVG
+ * sized in `ex` units without its own stylesheet, a Mermaid diagram, a long code block — is
+ * a single unbreakable element as far as the paginator is concerned, so it is not shrunk
+ * but *moved*: pushed whole to the next page, leaving the page it came from mostly blank.
+ * That failure reads as "the preview only rendered part of the note".
+ *
+ * Every rule is a ceiling, never a size, and the profile stylesheet comes after this and
+ * overrides all of it.
+ */
+export const BASE_DOCUMENT_CSS = `/* multi-exporter base — normalisation, overridden by the profile stylesheet below. */
+html, body { margin: 0; padding: 0; }
+img, svg, video, canvas, iframe { max-width: 100%; height: auto; }
+pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+table { max-width: 100%; }
+mjx-container { max-width: 100%; }
+mjx-container svg { max-width: 100%; height: auto; }
+.mermaid svg, .block-language-mermaid svg { max-width: 100%; height: auto; }
+`;
 
 const MARGIN_BOXES: [keyof PageFurniture, string][] = [
 	['topLeft', '@top-left'],

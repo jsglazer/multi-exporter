@@ -166,6 +166,7 @@ export class FolderExportModal extends Modal {
 		const outputDir = await showDirectoryDialog('Export folder to', this.settings.lastExportDir);
 		if (outputDir === null) return null;
 		this.settings.lastExportDir = outputDir;
+		void this.service.saveSettings();
 		return planSeparateExport({
 			paths,
 			sourceRoot: this.folder.path,

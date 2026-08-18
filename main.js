@@ -4372,12 +4372,21 @@ function mappingsUnder(map, folder) {
 
 // src/core/page-css.ts
 var PAGE_SIZES = {
-  A4: { width: "210mm", height: "297mm" },
-  A5: { width: "148mm", height: "210mm" },
   Letter: { width: "8.5in", height: "11in" },
   Legal: { width: "8.5in", height: "14in" },
-  Tabloid: { width: "11in", height: "17in" }
+  Tabloid: { width: "11in", height: "17in" },
+  A4: { width: "210mm", height: "297mm" },
+  A5: { width: "148mm", height: "210mm" }
 };
+var BASE_DOCUMENT_CSS = `/* multi-exporter base \u2014 normalisation, overridden by the profile stylesheet below. */
+html, body { margin: 0; padding: 0; }
+img, svg, video, canvas, iframe { max-width: 100%; height: auto; }
+pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+table { max-width: 100%; }
+mjx-container { max-width: 100%; }
+mjx-container svg { max-width: 100%; height: auto; }
+.mermaid svg, .block-language-mermaid svg { max-width: 100%; height: auto; }
+`;
 var MARGIN_BOXES = [
   ["topLeft", "@top-left"],
   ["topCenter", "@top-center"],
@@ -4451,9 +4460,9 @@ function cssString(value) {
 var PAGEDJS_BACKEND_ID = "pagedjs-webview";
 function defaultPage() {
   return {
-    size: "A4",
+    size: "Letter",
     orientation: "portrait",
-    margins: { top: "20mm", right: "18mm", bottom: "20mm", left: "18mm" },
+    margins: { top: "1in", right: "0.75in", bottom: "1in", left: "0.75in" },
     furniture: { bottomCenter: { content: "counter(page)" } },
     suppressFirstPageFurniture: false,
     orphans: 2,
@@ -4514,7 +4523,7 @@ function createDefaultProfiles() {
       page: {
         ...defaultPage(),
         orientation: "landscape",
-        margins: { top: "12mm", right: "12mm", bottom: "14mm", left: "12mm" },
+        margins: { top: "0.5in", right: "0.5in", bottom: "0.6in", left: "0.5in" },
         furniture: {
           bottomLeft: { content: cssString("") },
           bottomRight: { content: 'counter(page) " / " counter(pages)' }
@@ -4530,7 +4539,8 @@ function createDefaultProfiles() {
       cslStyle: "",
       page: {
         ...defaultPage(),
-        margins: { top: "25mm", right: "25mm", bottom: "25mm", left: "32mm" },
+        // A wider left margin is the binding edge, the one place a manuscript wants asymmetry.
+        margins: { top: "1in", right: "1in", bottom: "1in", left: "1.25in" },
         furniture: { topCenter: { content: "string(chapter)" }, bottomCenter: { content: "counter(page)" } },
         rectoFurniture: { topRight: { content: "string(chapter)" }, bottomRight: { content: "counter(page)" } },
         versoFurniture: { topLeft: { content: "string(chapter)" }, bottomLeft: { content: "counter(page)" } },
@@ -4704,18 +4714,26 @@ var MD_ANNOTATION_CLASSES = {
   leader: "gutter-leader",
   tick: "gutter-tick"
 };
+var DialogUnavailableError = class extends Error {
+  constructor() {
+    super("Electron's file dialog could not be reached, so there was nowhere to write the export.");
+    this.name = "DialogUnavailableError";
+  }
+};
 function dialogBridge() {
   var _a, _b;
-  try {
-    const electron = require("electron");
-    return (_b = (_a = electron.remote) == null ? void 0 : _a.dialog) != null ? _b : null;
-  } catch (e) {
-    return null;
+  for (const moduleId of ["electron", "@electron/remote"]) {
+    try {
+      const module2 = require(moduleId);
+      const dialog = (_b = (_a = module2.remote) == null ? void 0 : _a.dialog) != null ? _b : module2.dialog;
+      if (dialog !== void 0) return dialog;
+    } catch (e) {
+    }
   }
+  throw new DialogUnavailableError();
 }
 async function showPdfSaveDialog(title, defaultPath) {
   const dialog = dialogBridge();
-  if (dialog === null) return null;
   const result = await dialog.showSaveDialog({
     title,
     defaultPath,
@@ -4726,7 +4744,6 @@ async function showPdfSaveDialog(title, defaultPath) {
 async function showDirectoryDialog(title, defaultPath) {
   var _a;
   const dialog = dialogBridge();
-  if (dialog === null) return null;
   const result = await dialog.showOpenDialog({
     title,
     ...defaultPath === "" ? {} : { defaultPath },
@@ -4734,6 +4751,7 @@ async function showDirectoryDialog(title, defaultPath) {
   });
   return result.canceled ? null : (_a = result.filePaths[0]) != null ? _a : null;
 }
+var READY_TIMEOUT_MS = 15e3;
 var PREVIEW_CONTAINER_CLASS = "mx-preview-container";
 var PREVIEW_OFFSCREEN_CLASS = "mx-preview-offscreen";
 function createPreviewWebview(parent, partition) {
@@ -4746,17 +4764,25 @@ function createPreviewWebview(parent, partition) {
   element.setAttribute("webpreferences", "contextIsolation=no,sandbox=no,javascript=yes");
   element.setAttribute("disableblinkfeatures", "Auxclick");
   let destroyed = false;
-  let readyPromise = null;
-  const ready = () => {
-    readyPromise != null ? readyPromise : readyPromise = new Promise((resolve) => {
-      const onReady = () => {
-        element.removeEventListener("dom-ready", onReady);
-        resolve();
-      };
-      element.addEventListener("dom-ready", onReady);
-    });
-    return readyPromise;
-  };
+  const readyPromise = new Promise((resolve) => {
+    var _a;
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      element.removeEventListener("dom-ready", onReady);
+      window.clearTimeout(timer);
+      resolve();
+    };
+    const onReady = () => settle();
+    element.addEventListener("dom-ready", onReady);
+    const timer = window.setTimeout(() => {
+      console.warn("[multi-exporter] webview dom-ready did not fire within %dms; continuing.", READY_TIMEOUT_MS);
+      settle();
+    }, READY_TIMEOUT_MS);
+    if (((_a = element.isLoading) == null ? void 0 : _a.call(element)) === false) settle();
+  });
+  const ready = () => readyPromise;
   return {
     element,
     ready,
@@ -5304,7 +5330,9 @@ async function prepareDocument(note, citeKeySet, deps, report) {
   }
 }
 function composeCss(profile) {
-  return `${buildPageCss(profile.page)}
+  return `${BASE_DOCUMENT_CSS}
+
+${buildPageCss(profile.page)}
 
 ${profile.stylesheet}`;
 }
@@ -38703,8 +38731,11 @@ var PagedJsWebviewBackend = class {
   async paginate(request) {
     const webview = this.container();
     await this.ensurePolyfill(webview);
-    await webview.run(paginateScript(request.html, request.css));
-    return await this.readPageMap(webview);
+    await webview.run(paginateScript(request.html, request.css, true));
+    const map = await this.readPageMap(webview);
+    await this.reportOverflow(webview);
+    await webview.run(FIT_PREVIEW_SCRIPT);
+    return map;
   }
   async export(request) {
     var _a, _b, _c;
@@ -38719,7 +38750,7 @@ var PagedJsWebviewBackend = class {
       (document, index) => `<section class="mx-document" data-mx-index="${index}" data-mx-source="${escapeAttribute(document.sourcePath)}" data-mx-title="${escapeAttribute(document.title)}">${document.html}</section>`
     ).join("\n");
     (_a = request.onProgress) == null ? void 0 : _a.call(request, 0.1, "Paginating");
-    await webview.run(paginateScript(html, request.css));
+    await webview.run(paginateScript(html, request.css, false));
     if (cancelled()) throw new ExportCancelled();
     const map = await this.readPageMap(webview);
     const documentStartPages = await webview.run(DOCUMENT_START_PAGES_SCRIPT);
@@ -38746,6 +38777,30 @@ var PagedJsWebviewBackend = class {
     return await webview.run(PAGE_MAP_SCRIPT);
   }
   /**
+   * Log what actually landed on each page, and warn about content wider or taller than the
+   * page box.
+   *
+   * A block the paginator cannot fit is not shrunk, it is moved: pushed whole to the next
+   * page, leaving the one before it blank below whatever preceded it. On screen that is
+   * indistinguishable from "the preview only rendered part of the note", and there is
+   * nothing in the DOM to inspect afterwards that says so. This says so.
+   */
+  async reportOverflow(webview) {
+    try {
+      const report = await webview.run(DIAGNOSTIC_SCRIPT);
+      console.debug("[multi-exporter] pagination", report);
+      if (report.oversized.length > 0) {
+        console.warn(
+          "[multi-exporter] %d element(s) do not fit the page box and were moved whole to a later page:",
+          report.oversized.length,
+          report.oversized
+        );
+      }
+    } catch (error2) {
+      console.debug("[multi-exporter] pagination diagnostics unavailable", error2);
+    }
+  }
+  /**
    * Explicit teardown, wired to both modal close and plugin unload.
    *
    * A live webview holds a WebContents; leaving one attached leaks a renderer process and
@@ -38763,7 +38818,7 @@ var PagedJsWebviewBackend = class {
 function bootstrapScript(pagedJsSource) {
   return `(() => {
 	document.open();
-	document.write('<!doctype html><html><head><meta charset="utf-8"><style id="mx-style"></style></head><body></body></html>');
+	document.write('<!doctype html><html><head><meta charset="utf-8"><style id="mx-chrome" media="screen"></style></head><body></body></html>');
 	document.close();
 	// auto:false \u2014 the polyfill must not start chunking the moment it loads; the host
 	// decides when to paginate, and paginates again in place on every edit.
@@ -38775,18 +38830,69 @@ function bootstrapScript(pagedJsSource) {
 	return true;
 })()`;
 }
-function paginateScript(html, css) {
+function paginateScript(html, css, previewChrome) {
   return `(async () => {
+	// Each run builds a fresh Previewer, so the previous one's polisher output has to go
+	// with it \u2014 otherwise every refresh leaves another copy of the page rules in the head
+	// and the oldest one keeps winning ties.
+	const previous = window.__mxPreviewer;
+	if (previous) {
+		try { previous.polisher.destroy(); } catch (error) { /* already gone */ }
+		try { previous.chunker.destroy(); } catch (error) { /* already gone */ }
+	}
+	document.querySelectorAll('style[data-pagedjs-inserted-styles]').forEach((element) => element.remove());
+
+	document.documentElement.classList.toggle('mx-preview-mode', ${previewChrome ? "true" : "false"});
+	document.getElementById('mx-chrome').textContent = ${JSON.stringify(PREVIEW_CHROME_CSS)};
+	document.documentElement.style.removeProperty('--mx-preview-scale');
+
 	document.body.innerHTML = '';
-	const style = document.getElementById('mx-style');
-	style.textContent = ${JSON.stringify(css)};
 	const source = document.createElement('div');
 	source.innerHTML = ${JSON.stringify(html)};
 	const previewer = new window.Paged.Previewer();
-	await previewer.preview(source, [], document.body);
+	window.__mxPreviewer = previewer;
+	await previewer.preview(source, [{ 'mx-profile.css': ${JSON.stringify(css)} }], document.body);
 	return true;
 })()`;
 }
+var PREVIEW_CHROME_CSS = `html.mx-preview-mode { background: #4b4e52; }
+html.mx-preview-mode body { background: transparent; margin: 0; }
+html.mx-preview-mode .pagedjs_pages {
+	transform: scale(var(--mx-preview-scale, 1));
+	transform-origin: top center;
+	padding: 16px 0;
+}
+html.mx-preview-mode .pagedjs_page {
+	background: #fff;
+	margin: 0 auto 16px;
+	box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}`;
+var FIT_PREVIEW_SCRIPT = `(() => {
+	const page = document.querySelector('.pagedjs_page');
+	const stack = document.querySelector('.pagedjs_pages');
+	if (!page || !stack) return false;
+	const fit = () => {
+		stack.style.height = '';
+		const available = document.documentElement.clientWidth - 24;
+		const width = page.getBoundingClientRect().width / (window.__mxPreviewScale || 1);
+		if (!width || !available) return;
+		const scale = Math.min(1, available / width);
+		window.__mxPreviewScale = scale;
+		document.documentElement.style.setProperty('--mx-preview-scale', String(scale));
+		// The stack keeps its unscaled height after a transform, leaving dead space below
+		// the last page; trimming it keeps the scrollbar honest.
+		stack.style.height = (stack.scrollHeight * scale) + 'px';
+	};
+	fit();
+	if (!window.__mxFitBound) {
+		window.__mxFitBound = true;
+		window.addEventListener('resize', () => {
+			const current = document.querySelector('.pagedjs_page');
+			if (current) fit();
+		});
+	}
+	return true;
+})()`;
 var PAGE_MAP_SCRIPT = `(() => {
 	const pages = Array.from(document.querySelectorAll('.pagedjs_page'));
 	const headings = [];
@@ -38801,6 +38907,31 @@ var PAGE_MAP_SCRIPT = `(() => {
 		});
 	});
 	return { pageCount: pages.length, headings };
+})()`;
+var DIAGNOSTIC_SCRIPT = `(() => {
+	const pages = Array.from(document.querySelectorAll('.pagedjs_page'));
+	const pageChars = pages.map((page) => (page.textContent || '').trim().length);
+	const box = document.querySelector('.pagedjs_page_content');
+	const contentBox = box ? { width: box.clientWidth, height: box.clientHeight } : null;
+	const oversized = [];
+	if (contentBox && contentBox.width > 0) {
+		const seen = new Set();
+		document.querySelectorAll('.pagedjs_page_content *').forEach((element) => {
+			if (element.children.length > 0) return;
+			const rect = element.getBoundingClientRect();
+			if (rect.width <= contentBox.width + 1 && rect.height <= contentBox.height + 1) return;
+			const key = element.tagName + ':' + element.className + ':' + Math.round(rect.width) + 'x' + Math.round(rect.height);
+			if (seen.has(key)) return;
+			seen.add(key);
+			oversized.push({
+				tag: element.tagName.toLowerCase(),
+				className: String(element.className || ''),
+				width: Math.round(rect.width),
+				height: Math.round(rect.height),
+			});
+		});
+	}
+	return { pageChars, oversized: oversized.slice(0, 20), contentBox };
 })()`;
 var DOCUMENT_START_PAGES_SCRIPT = `(() => {
 	const pages = Array.from(document.querySelectorAll('.pagedjs_page'));
@@ -54487,13 +54618,24 @@ function describeGateReason(reason) {
 // src/shell/export-service.ts
 var RENDER_HOST_ROOT_CLASS = "mx-render-host-root";
 var ExportService = class {
-  constructor(app, getSettings) {
+  constructor(app, getSettings, persist) {
     this.app = app;
     this.getSettings = getSettings;
+    this.persist = persist;
     this.writer = new NodeFileWriter();
     this.outline = new PdfLibOutlineInjector();
     this.compressor = new PdfSqueezerCompressor();
     this.transforms = new DomTransforms();
+  }
+  /**
+   * Persist the settings object the modals mutate.
+   *
+   * `lastExportDir` is written by whichever modal ran the export, and without this it only
+   * ever lived until the next reload — the directory picker reopened at the vault root
+   * every single time.
+   */
+  async saveSettings() {
+    await this.persist();
   }
   /**
    * Off-screen host for rendering notes into DOM, attached to the document body.
@@ -54672,15 +54814,22 @@ var ExportModal = class extends import_obsidian5.Modal {
       });
       this.setStatus(`${result.pageCount} page${result.pageCount === 1 ? "" : "s"}.`);
     } catch (error2) {
+      console.error("[multi-exporter] preview failed", error2);
       this.setStatus(`Preview failed: ${describeError(error2)}`);
     } finally {
       host.detach();
     }
   }
   async export() {
-    var _a, _b, _c;
+    var _a, _b;
     if (this.exporting) return;
-    const outputDir = await showDirectoryDialog("Export to folder", this.settings.lastExportDir);
+    let outputDir;
+    try {
+      outputDir = await showDirectoryDialog("Export to folder", this.settings.lastExportDir);
+    } catch (error2) {
+      this.fail(error2);
+      return;
+    }
     if (outputDir === null) return;
     this.exporting = true;
     this.setStatus("Exporting\u2026");
@@ -54696,16 +54845,27 @@ var ExportModal = class extends import_obsidian5.Modal {
       });
       const note = plan.notes[0];
       if (note !== void 0) note.destination = singleNoteDestination(outputDir, this.file.path);
-      const outcome = await this.service.run({ plan, profileFallback: this.profile });
+      const outcome = await this.service.run({
+        plan,
+        profileFallback: this.profile,
+        ...this.backend === null ? {} : { backend: this.backend }
+      });
       announceOutcome(outcome);
       this.settings.lastExportDir = outputDir;
-      this.setStatus((_c = outcome.written[0]) != null ? _c : "Nothing written.");
+      void this.service.saveSettings();
+      const written = outcome.written[0];
+      this.setStatus(written != null ? written : "Nothing written.");
+      if (written !== void 0 && !outcome.cancelled) this.close();
     } catch (error2) {
-      new import_obsidian5.Notice(`Export failed: ${describeError(error2)}`);
-      this.setStatus(`Export failed: ${describeError(error2)}`);
+      this.fail(error2);
     } finally {
       this.exporting = false;
     }
+  }
+  fail(error2) {
+    console.error("[multi-exporter] export failed", error2);
+    new import_obsidian5.Notice(`Export failed: ${describeError(error2)}`);
+    this.setStatus(`Export failed: ${describeError(error2)}`);
   }
   setStatus(text) {
     if (this.status !== null) this.status.setText(text);
@@ -54839,6 +54999,7 @@ var FolderExportModal = class extends import_obsidian6.Modal {
     const outputDir = await showDirectoryDialog("Export folder to", this.settings.lastExportDir);
     if (outputDir === null) return null;
     this.settings.lastExportDir = outputDir;
+    void this.service.saveSettings();
     return planSeparateExport({
       paths,
       sourceRoot: this.folder.path,
@@ -54868,6 +55029,7 @@ var FolderExportModal = class extends import_obsidian6.Modal {
 
 // src/settings-tab.ts
 var import_obsidian7 = require("obsidian");
+var REPOSITORY_URL = "https://github.com/jsglazer/multi-exporter";
 var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
@@ -54877,10 +55039,25 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
+    this.renderHeader(containerEl);
     this.renderProfileList(containerEl);
     this.renderProfileEditor(containerEl);
     this.renderFolderDefaults(containerEl);
     this.renderGeneral(containerEl);
+  }
+  /** Repository link, first thing on the page — where the docs and the issues live. */
+  renderHeader(containerEl) {
+    const header = containerEl.createDiv({ cls: "mx-settings-header" });
+    const link = header.createEl("a", {
+      cls: "mx-settings-link",
+      text: "Multi Exporter on GitHub",
+      href: REPOSITORY_URL
+    });
+    link.setAttribute("rel", "noopener");
+    header.createSpan({
+      cls: "mx-settings-header-note",
+      text: "Documentation, stylesheet recipes and issues."
+    });
   }
   get settings() {
     return this.plugin.settings;
@@ -54990,7 +55167,7 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
         await this.save();
       });
     });
-    new import_obsidian7.Setting(editor).setName("Margins").setDesc("Top, right, bottom, left \u2014 any CSS length.").addText(
+    new import_obsidian7.Setting(editor).setName("Margins").setDesc("Top, right, bottom, left \u2014 any CSS length. Inches by default; mm and pt work too.").addText(
       (text) => text.setValue(profile.page.margins.top).onChange(async (value) => {
         profile.page.margins.top = value;
         await this.save();
@@ -55138,7 +55315,11 @@ var MultiExporterPlugin = class extends import_obsidian8.Plugin {
   }
   async onload() {
     await this.loadSettings();
-    this.service = new ExportService(this.app, () => this.settings);
+    this.service = new ExportService(
+      this.app,
+      () => this.settings,
+      () => this.saveSettings()
+    );
     this.addSettingTab(new MultiExporterSettingTab(this.app, this));
     this.addCommand({
       id: "export-active-note",

@@ -11,11 +11,17 @@ import type { PageConfig, Profile, ProfileFlags, PluginSettings } from './types'
 
 export const PAGEDJS_BACKEND_ID = 'pagedjs-webview';
 
+/**
+ * Imperial by default: US Letter, margins in inches.
+ *
+ * A margin is any CSS length, so `20mm` remains perfectly valid in a profile — this is the
+ * starting point, not a restriction.
+ */
 function defaultPage(): PageConfig {
 	return {
-		size: 'A4',
+		size: 'Letter',
 		orientation: 'portrait',
-		margins: { top: '20mm', right: '18mm', bottom: '20mm', left: '18mm' },
+		margins: { top: '1in', right: '0.75in', bottom: '1in', left: '0.75in' },
 		furniture: { bottomCenter: { content: 'counter(page)' } },
 		suppressFirstPageFurniture: false,
 		orphans: 2,
@@ -81,7 +87,7 @@ export function createDefaultProfiles(): Profile[] {
 			page: {
 				...defaultPage(),
 				orientation: 'landscape',
-				margins: { top: '12mm', right: '12mm', bottom: '14mm', left: '12mm' },
+				margins: { top: '0.5in', right: '0.5in', bottom: '0.6in', left: '0.5in' },
 				furniture: {
 					bottomLeft: { content: cssString('') },
 					bottomRight: { content: 'counter(page) " / " counter(pages)' },
@@ -97,7 +103,8 @@ export function createDefaultProfiles(): Profile[] {
 			cslStyle: '',
 			page: {
 				...defaultPage(),
-				margins: { top: '25mm', right: '25mm', bottom: '25mm', left: '32mm' },
+				// A wider left margin is the binding edge, the one place a manuscript wants asymmetry.
+				margins: { top: '1in', right: '1in', bottom: '1in', left: '1.25in' },
 				furniture: { topCenter: { content: 'string(chapter)' }, bottomCenter: { content: 'counter(page)' } },
 				rectoFurniture: { topRight: { content: 'string(chapter)' }, bottomRight: { content: 'counter(page)' } },
 				versoFurniture: { topLeft: { content: 'string(chapter)' }, bottomLeft: { content: 'counter(page)' } },

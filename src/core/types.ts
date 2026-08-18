@@ -8,7 +8,7 @@
 
 export type AnnotationMode = 'gutter' | 'endnotes' | 'off';
 
-export type PageSize = 'A4' | 'A5' | 'Letter' | 'Legal' | 'Tabloid';
+export type PageSize = 'Letter' | 'Legal' | 'Tabloid' | 'A4' | 'A5';
 
 export interface PageMargins {
 	top: string;
