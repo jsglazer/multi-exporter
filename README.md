@@ -51,8 +51,7 @@ One paginated DOM feeds both the preview and the PDF writer. That property is st
 
 ## Features
 
-- **Export profiles — data, not code.** A profile is `{ name, stylesheet, backend, page, flags }`. There is no fixed set: create, duplicate, rename and delete them freely. `Article`, `Dataview` and `Manuscript` ship as *starting examples*, not as an enum the code branches on. Every behavioural difference reads a flag, so a profile you create is indistinguishable from one that shipped.
-  Destructive changes ask first: deleting a profile names the folder defaults that go with it and the profile that inherits the default role, and **Restore example profiles** overwrites the shipped ids — so an example edited into a corner can actually be repaired — after naming exactly what it will replace. Profiles you created yourself are never candidates.
+- **Export profiles — data, not code.** A profile is `{ name, stylesheet, backend, page, flags }`. There is no fixed set: create, duplicate, rename and delete them freely. `Article`, `Dataview` and `Manuscript` ship as *starting examples*, not as an enum the code branches on. Every behavioural difference reads a flag, so a profile you create is indistinguishable from one that shipped. Destructive changes ask first: deleting a profile names the folder defaults that go with it and the profile that inherits the default role, and **Restore example profiles** overwrites the shipped ids — so an example edited into a corner can actually be repaired — after naming exactly what it will replace. Profiles you created yourself are never candidates.
 - **Live preview that is the export.** Change the profile, the stylesheet, a margin or a running head and the preview re-paginates in place. Pagination is serialised, so switching profiles faster than a document paginates queues the work instead of racing it.
 - **Name the output.** A single-note export takes any file name in the modal, defaulting to the note's own. It is treated as a file name and not a path: sanitised to one segment, interior dots preserved, `.pdf` added exactly once.
 - **Real page furniture.** `@page` margin boxes, `counter(page)` / `counter(pages)`, `@page :first`, `@page :left` / `:right` for recto/verso, `orphans` / `widows` / `break-*`. **Keep headings with their text** is a Page toggle, on by default: a heading that would land at the foot of a page moves to the next one along with the paragraph under it. `orphans` and `widows` cannot express that — they count lines *inside* one block, and a stranded heading is a break *between* two. Two named strings are supplied for you — `doctitle` and `docdate` — so a running head can carry the note's name and the export timestamp, and stays correct in a merged export where the answer changes partway down the PDF. The `Article` example uses all four boxes: note name and author over a 0.4pt head rule, `n of m` and the timestamp under a foot rule.
@@ -76,7 +75,7 @@ Not in the community plugin store yet. Install manually or with BRAT.
 ```sh
 npm install
 npm run build      # tsc --noEmit && esbuild → main.js
-npm test           # 217 headless tests, no Obsidian required
+npm test           # 238 headless tests, no Obsidian required
 ```
 
 ## Usage
@@ -92,8 +91,7 @@ Folder defaults resolve **nearest-ancestor**: the deepest mapped folder containi
 
 ### Page controls
 
-Everything above the stylesheet editor shapes the *page* rather than the content, and is
-turned into `@page` rules for you. Most are self-explanatory; these three are not.
+Everything above the stylesheet editor shapes the *page* rather than the content, and is turned into `@page` rules for you. Most are self-explanatory; these three are not.
 
 | Control | What it does |
 |---|---|
@@ -101,28 +99,20 @@ turned into `@page` rules for you. Most are self-explanatory; these three are no
 | **Keep headings with their text** | Emits `break-after: avoid` for `h1`–`h6`, so a heading that would land at the foot of a page moves to the next one along with the paragraph under it. On by default. `orphans` and `widows` cannot express this — they count lines *inside* one block, and a stranded heading is a break *between* two. Opt a level back out with `break-after: auto` in your stylesheet. |
 | **Page numbering in a merged export** | *Restart at each note* (the default) makes a ten-note merge read `1 of 6`, `2 of 6`, … then `1 of 12` again. *Continuous* numbers the whole PDF 1…N. Single-note and Separate exports are one document either way, so this changes nothing for them. |
 
-**Furniture** throughout means the running heads and feet — everything printed in the `@page`
-margin boxes rather than in the text block.
+**Furniture** throughout means the running heads and feet — everything printed in the `@page` margin boxes rather than in the text block.
 
 ### Customising a stylesheet
 
-The stylesheet is the primary styling surface — everything about how an export *looks* is a
-profile stylesheet, edited in **Settings → Multi Exporter → Edit → Stylesheet**. There is no
-theme to fight and no template to override: the CSS you write is the CSS that paginates.
+The stylesheet is the primary styling surface — everything about how an export *looks* is a profile stylesheet, edited in **Settings → Multi Exporter → Edit → Stylesheet**. There is no theme to fight and no template to override: the CSS you write is the CSS that paginates.
 
 Each export is built from two stylesheets, concatenated in this order:
 
-1. **Generated `@page` rules** — page size, margins, margin-box furniture, `orphans` /
-   `widows`. These come from the *Page* controls above the editor, not from your CSS.
+1. **Generated `@page` rules** — page size, margins, margin-box furniture, `orphans` / `widows`. These come from the *Page* controls above the editor, not from your CSS.
 2. **Your profile stylesheet** — everything else. It comes last, so it wins every tie.
 
-Both are handed to paged.js's polisher, which is what makes `@page` real: page geometry,
-margin boxes and page counters are resolved *before* Chromium prints, so the PDF is printed
-at zero margins from a document whose headers and footers are already ordinary elements.
+Both are handed to paged.js's polisher, which is what makes `@page` real: page geometry, margin boxes and page counters are resolved *before* Chromium prints, so the PDF is printed at zero margins from a document whose headers and footers are already ordinary elements.
 
-**What the DOM looks like.** You are styling Obsidian's own rendered output, so every
-selector you would use in a CSS snippet works — `.callout`, `.dataview`, `.internal-link`,
-`.tag`, `.math`, `.mermaid`, and any class a plugin adds. On top of that, this plugin adds:
+**What the DOM looks like.** You are styling Obsidian's own rendered output, so every selector you would use in a CSS snippet works — `.callout`, `.dataview`, `.internal-link`, `.tag`, `.math`, `.mermaid`, and any class a plugin adds. On top of that, this plugin adds:
 
 | Selector | What it is |
 |---|---|
@@ -180,22 +170,13 @@ a[href^="http"]::after { content: " (" attr(href) ")"; font-size: 0.85em; color:
 @page :right { margin-left: 1.25in; }
 ```
 
-One rule to leave alone: `.mx-doc-meta` is hidden by collapsing it to zero height rather
-than with `display: none`, because paged.js only reads a named string off an element it
-actually lays out onto a page. Giving it `display: none` empties `string(doctitle)` and
-`string(docdate)`, and the running head silently prints nothing.
+One rule to leave alone: `.mx-doc-meta` is hidden by collapsing it to zero height rather than with `display: none`, because paged.js only reads a named string off an element it actually lays out onto a page. Giving it `display: none` empties `string(doctitle)` and `string(docdate)`, and the running head silently prints nothing.
 
-**Fonts.** Anything installed on the machine can be named directly. Web fonts are not
-fetched during pagination, so an `@import` or a remote `@font-face` will not resolve — embed
-the face as a `data:` URI in the stylesheet if you need one the system does not have.
+**Fonts.** Anything installed on the machine can be named directly. Web fonts are not fetched during pagination, so an `@import` or a remote `@font-face` will not resolve — embed the face as a `data:` URI in the stylesheet if you need one the system does not have.
 
-**Units.** Profiles ship imperial: US Letter, margins in inches. A margin is any CSS length,
-so `20mm`, `2cm` and `54pt` are all equally valid — change the page size to A4 and type
-millimetres if that suits the document better.
+**Units.** Profiles ship imperial: US Letter, margins in inches. A margin is any CSS length, so `20mm`, `2cm` and `54pt` are all equally valid — change the page size to A4 and type millimetres if that suits the document better.
 
-**Iterating.** The preview *is* the paginated output, so the loop is: edit the stylesheet in
-settings, reopen the export modal (or press **Refresh preview**), and look. What you see is
-what the PDF contains — there is no second rendering pass to disagree with it.
+**Iterating.** The preview *is* the paginated output, so the loop is: edit the stylesheet in settings, reopen the export modal (or press **Refresh preview**), and look. What you see is what the PDF contains — there is no second rendering pass to disagree with it.
 
 ### Citations
 
@@ -211,8 +192,8 @@ If `zotero-manager` is missing, disabled, or does not expose API `version: 1`, c
 src/core/     Pure decision logic. Zero imports from `obsidian`, node `fs`, or the network.
 src/adapter/  The ONE module that touches undocumented internals and Electron.
 src/shell/    Obsidian/Electron implementations of the interfaces core declares.
-vendor/       Vendored, patched paged.js, with the diff checked in as a .patch.
-tests/        217 headless tests. Import only from src/core/.
+vendor/       Vendored, patched paged.js, with each diff checked in as a .patch.
+tests/        238 headless tests. Import only from src/core/.
 ```
 
 Every capability the pipeline needs — rendering, citations, image bytes, pagination, PDF surgery, disk — arrives as an injected interface, so the whole export sequence runs headlessly against fakes. Filesystem writes go through a `FileWriter`; tests inject `InMemoryFileWriter`, so a test run can never touch a real disk.
@@ -221,7 +202,14 @@ The only genuinely untestable surface — a live webview and Chromium's `printTo
 
 ### The vendored paged.js
 
-`findElement` crashes on a null node at page boundaries, aborting pagination with no useful error. The fix is one line. It is vendored under `vendor/pagedjs/` with the diff checked in, and guarded by `tests/pagedjs-null-guard.test.ts` — which extracts the real function from the shipped file and executes it against the null input that crashed. Re-vendoring without the patch breaks the build, not just a review.
+paged.js is vendored under `vendor/pagedjs/` rather than imported, because two upstream crashes abort pagination with an error that says nothing about the document being paginated. Each fix is a handful of lines, each diff is checked in as a `.patch`, and each is guarded by a test that extracts the real function from the shipped file and executes it against the input that crashed — so re-vendoring without a patch breaks the build, not just a review.
+
+| Patch | The crash |
+|---|---|
+| `findElement-null-guard` | `findElement` dereferences a null node at page boundaries, throwing a `TypeError` out of the layout builder. |
+| `nth-of-type-following-double-remove` | paged.js gives `*-of-type` pseudos and sibling combinators a rule handler each, and **both remove the rule they rewrite**. One selector list holding both kinds — `p:first-of-type, h1 + p { … }`, ordinary CSS — is removed twice, and csstree throws `item doesn't belong to list` out of the polisher before a single page is laid out. |
+
+The second one was doubly disguised. Electron re-raises *any* exception thrown inside a `<webview>` as `Error invoking remote method 'GUEST_VIEW_MANAGER_CALL': Error: <message>`, so a stylesheet bug arrives looking like a crashed renderer process. The adapter now strips that framing before anything reads the message, and classifies a dead guest by the words Electron uses for death rather than by the wrapper every guest error carries — a missed death costs one honest error message, while a script error misread as a death destroys the true message and substitutes a false one.
 
 ### Internals targeted
 
