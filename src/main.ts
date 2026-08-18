@@ -147,8 +147,19 @@ export default class MultiExporterPlugin extends Plugin {
 		new FolderExportModal(this.app, folder, this.settings, this.service).open();
 	}
 
+	/**
+	 * Load, normalise, and persist the result **when normalising actually changed the schema
+	 * version** — that is, when a migration ran.
+	 *
+	 * Without writing it back, a migrated value only exists in memory: the next load reads
+	 * the same old `data.json`, migrates again, and the settings tab shows the migrated
+	 * value while the file on disk says something else.
+	 */
 	async loadSettings(): Promise<void> {
-		this.settings = normalizeSettings(await this.loadData());
+		const raw = (await this.loadData()) as { settingsVersion?: unknown } | null;
+		const loadedVersion = typeof raw?.settingsVersion === 'number' ? raw.settingsVersion : 0;
+		this.settings = normalizeSettings(raw);
+		if (raw !== null && loadedVersion !== this.settings.settingsVersion) await this.saveSettings();
 	}
 
 	async saveSettings(): Promise<void> {

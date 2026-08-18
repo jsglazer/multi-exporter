@@ -4555,10 +4555,43 @@ function createDefaultProfiles() {
     }
   ];
 }
+var SETTINGS_VERSION = 1;
+var LEGACY_METRIC_PAGES = [
+  {
+    legacy: { top: "20mm", right: "18mm", bottom: "20mm", left: "18mm" },
+    imperial: { top: "1in", right: "0.75in", bottom: "1in", left: "0.75in" }
+  },
+  {
+    legacy: { top: "12mm", right: "12mm", bottom: "14mm", left: "12mm" },
+    imperial: { top: "0.5in", right: "0.5in", bottom: "0.6in", left: "0.5in" }
+  },
+  {
+    legacy: { top: "25mm", right: "25mm", bottom: "25mm", left: "32mm" },
+    imperial: { top: "1in", right: "1in", bottom: "1in", left: "1.25in" }
+  }
+];
+function sameMargins(a, b) {
+  return a.top === b.top && a.right === b.right && a.bottom === b.bottom && a.left === b.left;
+}
+function migrateLegacyMetricProfiles(profiles) {
+  return profiles.map((profile) => {
+    const match = LEGACY_METRIC_PAGES.find((candidate) => sameMargins(profile.page.margins, candidate.legacy));
+    if (match === void 0) return profile;
+    return {
+      ...profile,
+      page: {
+        ...profile.page,
+        size: profile.page.size === "A4" ? "Letter" : profile.page.size,
+        margins: { ...match.imperial }
+      }
+    };
+  });
+}
 function createDefaultSettings() {
   var _a, _b;
   const profiles = createDefaultProfiles();
   return {
+    settingsVersion: SETTINGS_VERSION,
     profiles,
     defaultProfileId: (_b = (_a = profiles[0]) == null ? void 0 : _a.id) != null ? _b : "article",
     folderProfiles: {},
@@ -4601,7 +4634,9 @@ function normalizeSettings(loaded) {
   const defaults = createDefaultSettings();
   if (loaded === null || typeof loaded !== "object") return defaults;
   const raw = loaded;
-  const profiles = Array.isArray(raw.profiles) && raw.profiles.length > 0 ? raw.profiles.map(normalizeProfile) : defaults.profiles;
+  const loadedVersion = typeof raw.settingsVersion === "number" ? raw.settingsVersion : 0;
+  const normalized = Array.isArray(raw.profiles) && raw.profiles.length > 0 ? raw.profiles.map(normalizeProfile) : defaults.profiles;
+  const profiles = loadedVersion < 1 ? migrateLegacyMetricProfiles(normalized) : normalized;
   const ids = new Set(profiles.map((profile) => profile.id));
   const defaultProfileId = typeof raw.defaultProfileId === "string" && ids.has(raw.defaultProfileId) ? raw.defaultProfileId : (_b = (_a = profiles[0]) == null ? void 0 : _a.id) != null ? _b : defaults.defaultProfileId;
   const folderProfiles = {};
@@ -4611,6 +4646,7 @@ function normalizeSettings(loaded) {
     }
   }
   return {
+    settingsVersion: SETTINGS_VERSION,
     profiles,
     defaultProfileId,
     folderProfiles,
@@ -55283,6 +55319,16 @@ var MultiExporterSettingTab = class extends import_obsidian7.PluginSettingTab {
         await this.save();
       })
     );
+    new import_obsidian7.Setting(editor).setName("Reset page to defaults").setDesc("Restores the shipped page size, orientation, margins and furniture. Leaves the stylesheet alone.").addButton(
+      (button) => button.setButtonText("Reset page").onClick(async () => {
+        const template = createDefaultProfiles().find((candidate) => candidate.id === profile.id);
+        const source = template != null ? template : createDefaultProfiles()[0];
+        if (source === void 0) return;
+        profile.page = structuredCloneProfile(source).page;
+        await this.save();
+        this.display();
+      })
+    );
     new import_obsidian7.Setting(editor).setName("Suppress furniture on the first page").setDesc("Emits @page :first with every margin box emptied.").addToggle(
       (toggle) => toggle.setValue(profile.page.suppressFirstPageFurniture).onChange(async (value) => {
         profile.page.suppressFirstPageFurniture = value;
@@ -55511,8 +55557,19 @@ var MultiExporterPlugin = class extends import_obsidian8.Plugin {
     if (this.service === null) return;
     new FolderExportModal(this.app, folder, this.settings, this.service).open();
   }
+  /**
+   * Load, normalise, and persist the result **when normalising actually changed the schema
+   * version** — that is, when a migration ran.
+   *
+   * Without writing it back, a migrated value only exists in memory: the next load reads
+   * the same old `data.json`, migrates again, and the settings tab shows the migrated
+   * value while the file on disk says something else.
+   */
   async loadSettings() {
-    this.settings = normalizeSettings(await this.loadData());
+    const raw = await this.loadData();
+    const loadedVersion = typeof (raw == null ? void 0 : raw.settingsVersion) === "number" ? raw.settingsVersion : 0;
+    this.settings = normalizeSettings(raw);
+    if (raw !== null && loadedVersion !== this.settings.settingsVersion) await this.saveSettings();
   }
   async saveSettings() {
     await this.saveData(this.settings);

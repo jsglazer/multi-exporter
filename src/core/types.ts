@@ -83,6 +83,8 @@ export interface Profile {
 export type FolderProfileMap = Record<string, string>;
 
 export interface PluginSettings {
+	/** Bumped when a shipped default changes in a way old saved settings should follow. */
+	settingsVersion: number;
 	profiles: Profile[];
 	/** Profile used when no folder mapping matches. */
 	defaultProfileId: string;

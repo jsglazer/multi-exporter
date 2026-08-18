@@ -1,5 +1,5 @@
 import { cssString } from './page-css';
-import type { PageConfig, Profile, ProfileFlags, PluginSettings } from './types';
+import type { PageConfig, PageMargins, Profile, ProfileFlags, PluginSettings } from './types';
 
 /**
  * Profiles are data, not code.
@@ -120,9 +120,69 @@ export function createDefaultProfiles(): Profile[] {
 	];
 }
 
+/**
+ * Current settings schema version.
+ *
+ * 1 — profiles ship imperial (US Letter, margins in inches). Settings saved before this
+ * carry the old metric defaults, and persisted settings always beat new defaults, so an
+ * existing vault would keep 20mm margins forever without the migration below.
+ */
+export const SETTINGS_VERSION = 1;
+
+/**
+ * The exact metric page defaults that shipped before `SETTINGS_VERSION` 1, each paired with
+ * its imperial replacement.
+ *
+ * Matched as a whole tuple, and only ever when every one of the four margins is untouched.
+ * A profile whose margins were edited — even to a value that happens to be metric — does not
+ * match, and nothing rewrites it. Migrating a value the user chose would be worse than
+ * leaving an old default in place.
+ */
+const LEGACY_METRIC_PAGES: { legacy: PageMargins; imperial: PageMargins }[] = [
+	{
+		legacy: { top: '20mm', right: '18mm', bottom: '20mm', left: '18mm' },
+		imperial: { top: '1in', right: '0.75in', bottom: '1in', left: '0.75in' },
+	},
+	{
+		legacy: { top: '12mm', right: '12mm', bottom: '14mm', left: '12mm' },
+		imperial: { top: '0.5in', right: '0.5in', bottom: '0.6in', left: '0.5in' },
+	},
+	{
+		legacy: { top: '25mm', right: '25mm', bottom: '25mm', left: '32mm' },
+		imperial: { top: '1in', right: '1in', bottom: '1in', left: '1.25in' },
+	},
+];
+
+function sameMargins(a: PageMargins, b: PageMargins): boolean {
+	return a.top === b.top && a.right === b.right && a.bottom === b.bottom && a.left === b.left;
+}
+
+/**
+ * Rewrite untouched metric defaults to their imperial equivalents, once.
+ *
+ * The page size moves with them: a profile still carrying the old A4 default alongside old
+ * default margins was never configured, so it follows the new Letter default too. A profile
+ * whose size was changed keeps it.
+ */
+export function migrateLegacyMetricProfiles(profiles: readonly Profile[]): Profile[] {
+	return profiles.map((profile) => {
+		const match = LEGACY_METRIC_PAGES.find((candidate) => sameMargins(profile.page.margins, candidate.legacy));
+		if (match === undefined) return profile;
+		return {
+			...profile,
+			page: {
+				...profile.page,
+				size: profile.page.size === 'A4' ? 'Letter' : profile.page.size,
+				margins: { ...match.imperial },
+			},
+		};
+	});
+}
+
 export function createDefaultSettings(): PluginSettings {
 	const profiles = createDefaultProfiles();
 	return {
+		settingsVersion: SETTINGS_VERSION,
 		profiles,
 		defaultProfileId: profiles[0]?.id ?? 'article',
 		folderProfiles: {},
@@ -185,7 +245,10 @@ export function normalizeSettings(loaded: unknown): PluginSettings {
 	if (loaded === null || typeof loaded !== 'object') return defaults;
 	const raw = loaded as Partial<PluginSettings>;
 
-	const profiles = Array.isArray(raw.profiles) && raw.profiles.length > 0 ? raw.profiles.map(normalizeProfile) : defaults.profiles;
+	const loadedVersion = typeof raw.settingsVersion === 'number' ? raw.settingsVersion : 0;
+	const normalized =
+		Array.isArray(raw.profiles) && raw.profiles.length > 0 ? raw.profiles.map(normalizeProfile) : defaults.profiles;
+	const profiles = loadedVersion < 1 ? migrateLegacyMetricProfiles(normalized) : normalized;
 	const ids = new Set(profiles.map((profile) => profile.id));
 	const defaultProfileId =
 		typeof raw.defaultProfileId === 'string' && ids.has(raw.defaultProfileId)
@@ -200,6 +263,7 @@ export function normalizeSettings(loaded: unknown): PluginSettings {
 	}
 
 	return {
+		settingsVersion: SETTINGS_VERSION,
 		profiles,
 		defaultProfileId,
 		folderProfiles,

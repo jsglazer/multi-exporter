@@ -2,7 +2,7 @@ import { PluginSettingTab, Setting } from 'obsidian';
 import type { App } from 'obsidian';
 import { PAGE_SIZES } from './core/page-css';
 import { clearFolderProfile, mappingsUnder, pruneFolderProfiles } from './core/profile-resolver';
-import { createDefaultProfiles, duplicateProfile, makeProfileId } from './core/profiles';
+import { createDefaultProfiles, duplicateProfile, makeProfileId, structuredCloneProfile } from './core/profiles';
 import type { AnnotationMode, PageSize, Profile } from './core/types';
 import type MultiExporterPlugin from './main';
 
@@ -220,6 +220,20 @@ export class MultiExporterSettingTab extends PluginSettingTab {
 				text.setValue(profile.page.margins.left).onChange(async (value) => {
 					profile.page.margins.left = value;
 					await this.save();
+				}),
+			);
+
+		new Setting(editor)
+			.setName('Reset page to defaults')
+			.setDesc('Restores the shipped page size, orientation, margins and furniture. Leaves the stylesheet alone.')
+			.addButton((button) =>
+				button.setButtonText('Reset page').onClick(async () => {
+					const template = createDefaultProfiles().find((candidate) => candidate.id === profile.id);
+					const source = template ?? createDefaultProfiles()[0];
+					if (source === undefined) return;
+					profile.page = structuredCloneProfile(source).page;
+					await this.save();
+					this.display();
 				}),
 			);
 
