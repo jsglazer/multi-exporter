@@ -47,9 +47,33 @@ describe('ordering', () => {
 		expect(orderNotes(['a.md', 'b.png', 'c.canvas'])).toEqual(['a.md']);
 	});
 
+	/**
+	 * Case must not outrank the alphabet.
+	 *
+	 * A raw code-point comparison puts every capital ahead of every lowercase letter, which put
+	 * `GRE combination…` before `Goal Statement…` in a real export — `R` (0x52) beating `o`
+	 * (0x6F). Nobody reading the folder calls that alphabetical, and it does not match the order
+	 * Obsidian's own file explorer shows.
+	 */
+	it('orders case-insensitively', () => {
+		expect(comparePathsHierarchyFirst('A/apple.md', 'A/Zebra.md')).toBeLessThan(0);
+		// The exact pair from the report.
+		expect(
+			orderNotes(['A/GRE combination and permutations problems.md', 'A/Goal Statement.md']),
+		).toEqual(['A/Goal Statement.md', 'A/GRE combination and permutations problems.md']);
+	});
+
+	it('orders folder segments case-insensitively too', () => {
+		expect(comparePathsHierarchyFirst('apple/x.md', 'Zebra/x.md')).toBeLessThan(0);
+	});
+
 	// A locale-aware collator would make the export order depend on the machine running it.
-	it('compares by code point, not by locale', () => {
-		expect(comparePathsHierarchyFirst('A/Zebra.md', 'A/apple.md')).toBeLessThan(0);
+	// `toLowerCase()` without a locale uses Unicode's default case mapping, so this stays
+	// deterministic — and names differing only in case still get a stable order rather than an
+	// arbitrary one.
+	it('breaks case-only ties deterministically', () => {
+		expect(comparePathsHierarchyFirst('A/README.md', 'A/readme.md')).toBeLessThan(0);
+		expect(comparePathsHierarchyFirst('A/readme.md', 'A/README.md')).toBeGreaterThan(0);
 	});
 
 	it('is stable for identical paths', () => {

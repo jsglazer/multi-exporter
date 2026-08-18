@@ -4308,21 +4308,24 @@ function relativeTo(root, path) {
   const rootLength = pathSegments(root).length;
   return pathSegments(path).slice(rootLength).join("/");
 }
+function compareNames(a, b) {
+  const foldedA = a.toLowerCase();
+  const foldedB = b.toLowerCase();
+  if (foldedA !== foldedB) return foldedA < foldedB ? -1 : 1;
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
 function comparePathsHierarchyFirst(a, b) {
   var _a, _b;
   const dirA = pathSegments(parentFolder(a));
   const dirB = pathSegments(parentFolder(b));
   const shared = Math.min(dirA.length, dirB.length);
   for (let i3 = 0; i3 < shared; i3++) {
-    const segA = (_a = dirA[i3]) != null ? _a : "";
-    const segB = (_b = dirB[i3]) != null ? _b : "";
-    if (segA !== segB) return segA < segB ? -1 : 1;
+    const order = compareNames((_a = dirA[i3]) != null ? _a : "", (_b = dirB[i3]) != null ? _b : "");
+    if (order !== 0) return order;
   }
   if (dirA.length !== dirB.length) return dirA.length - dirB.length;
-  const nameA = baseName(a);
-  const nameB = baseName(b);
-  if (nameA === nameB) return 0;
-  return nameA < nameB ? -1 : 1;
+  return compareNames(baseName(a), baseName(b));
 }
 var UNSAFE_FILENAME = /[<>:"/\\|?*\u0000-\u001f]/g;
 function sanitizeFileName(name) {

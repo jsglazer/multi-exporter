@@ -74,28 +74,45 @@ export function relativeTo(root: string, path: string): string {
 }
 
 /**
+ * Compare two path segments the way a reader expects a list of files to be ordered.
+ *
+ * **Case-insensitive first, code point second.** A raw code-point comparison puts every
+ * capital ahead of every lowercase letter, so `GRE combination…` sorts before
+ * `Goal Statement…` on the strength of `R` (0x52) beating `o` (0x6F). That is not alphabetical
+ * to anyone reading it, and it does not match the order Obsidian's own file explorer shows —
+ * which is the order the export is expected to reproduce.
+ *
+ * Still deterministic, which was the point of avoiding a collator in the first place:
+ * `toLowerCase()` without a locale argument uses Unicode's default case mapping, so the result
+ * does not depend on the machine running the export. The code-point comparison remains as the
+ * tie-breaker, so `README` and `readme` have a stable order rather than an arbitrary one.
+ */
+export function compareNames(a: string, b: string): number {
+	const foldedA = a.toLowerCase();
+	const foldedB = b.toLowerCase();
+	if (foldedA !== foldedB) return foldedA < foldedB ? -1 : 1;
+	if (a === b) return 0;
+	return a < b ? -1 : 1;
+}
+
+/**
  * Ordering for bulk export: **folder hierarchy first, then file name**.
  *
  * Directory portions are compared segment by segment, so a file sitting directly in `A`
  * sorts before anything inside `A/B`, and `A/B` sorts before `A/C`. Only when two files
- * share a directory does the file name decide. Comparison is code-point based rather than
- * locale-aware, because a locale-sensitive collator would make the output order depend on
- * the machine running the export.
+ * share a directory does the file name decide. Both use `compareNames`, so case never
+ * outranks the alphabet.
  */
 export function comparePathsHierarchyFirst(a: string, b: string): number {
 	const dirA = pathSegments(parentFolder(a));
 	const dirB = pathSegments(parentFolder(b));
 	const shared = Math.min(dirA.length, dirB.length);
 	for (let i = 0; i < shared; i++) {
-		const segA = dirA[i] ?? '';
-		const segB = dirB[i] ?? '';
-		if (segA !== segB) return segA < segB ? -1 : 1;
+		const order = compareNames(dirA[i] ?? '', dirB[i] ?? '');
+		if (order !== 0) return order;
 	}
 	if (dirA.length !== dirB.length) return dirA.length - dirB.length;
-	const nameA = baseName(a);
-	const nameB = baseName(b);
-	if (nameA === nameB) return 0;
-	return nameA < nameB ? -1 : 1;
+	return compareNames(baseName(a), baseName(b));
 }
 
 /** Characters that are unsafe in a file name on macOS/Windows, plus control characters. */
