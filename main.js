@@ -4751,6 +4751,21 @@ async function showDirectoryDialog(title, defaultPath) {
   });
   return result.canceled ? null : (_a = result.filePaths[0]) != null ? _a : null;
 }
+async function retryWhileUnready(attempt, destroyed) {
+  const deadline = Date.now() + READY_TIMEOUT_MS;
+  for (; ; ) {
+    try {
+      return await attempt();
+    } catch (error2) {
+      if (destroyed() || !isUnreadyError(error2) || Date.now() >= deadline) throw error2;
+      await new Promise((resolve) => window.setTimeout(resolve, RETRY_INTERVAL_MS));
+    }
+  }
+}
+function isUnreadyError(error2) {
+  return error2 instanceof Error && /must be attached to the DOM|dom-ready/i.test(error2.message);
+}
+var RETRY_INTERVAL_MS = 150;
 var READY_TIMEOUT_MS = 15e3;
 var PREVIEW_CONTAINER_CLASS = "mx-preview-container";
 var PREVIEW_OFFSCREEN_CLASS = "mx-preview-offscreen";
@@ -4780,7 +4795,10 @@ function createPreviewWebview(parent, partition) {
       console.warn("[multi-exporter] webview dom-ready did not fire within %dms; continuing.", READY_TIMEOUT_MS);
       settle();
     }, READY_TIMEOUT_MS);
-    if (((_a = element.isLoading) == null ? void 0 : _a.call(element)) === false) settle();
+    try {
+      if (((_a = element.isLoading) == null ? void 0 : _a.call(element)) === false) settle();
+    } catch (e) {
+    }
   });
   const ready = () => readyPromise;
   return {
@@ -4789,12 +4807,12 @@ function createPreviewWebview(parent, partition) {
     async run(code) {
       if (destroyed) throw new Error("The preview webview has been destroyed.");
       await ready();
-      return await element.executeJavaScript(code);
+      return await retryWhileUnready(() => element.executeJavaScript(code), () => destroyed);
     },
     async printToPdf(options) {
       if (destroyed) throw new Error("The preview webview has been destroyed.");
       await ready();
-      return await element.printToPDF(options);
+      return await retryWhileUnready(() => element.printToPDF(options), () => destroyed);
     },
     setOffscreen(offscreen) {
       element.toggleClass(PREVIEW_OFFSCREEN_CLASS, offscreen);

@@ -203,6 +203,35 @@ export interface PrintToPdfOptions {
 }
 
 /**
+ * Retry a guest call for as long as Electron reports the webview unready.
+ *
+ * `dom-ready` is the documented signal and it is now subscribed before the element can
+ * possibly fire it — but readiness is a fact about the guest WebContents, not about our
+ * bookkeeping, and one missed edge used to mean an export that hung forever with nothing
+ * thrown. Retrying a call that says "not yet" costs milliseconds and removes that entire
+ * failure mode; any other error propagates on the first attempt, unchanged.
+ */
+async function retryWhileUnready<T>(attempt: () => Promise<T>, destroyed: () => boolean): Promise<T> {
+	const deadline = Date.now() + READY_TIMEOUT_MS;
+	for (;;) {
+		try {
+			return await attempt();
+		} catch (error) {
+			if (destroyed() || !isUnreadyError(error) || Date.now() >= deadline) throw error;
+			await new Promise<void>((resolve) => window.setTimeout(resolve, RETRY_INTERVAL_MS));
+		}
+	}
+}
+
+/** Electron's own wording for "the guest is not ready yet". Matched, not guessed at. */
+function isUnreadyError(error: unknown): boolean {
+	return error instanceof Error && /must be attached to the DOM|dom-ready/i.test(error.message);
+}
+
+/** Gap between retries while the guest starts. Short: readiness arrives in milliseconds. */
+const RETRY_INTERVAL_MS = 150;
+
+/**
  * How long to wait for the guest page's `dom-ready` before proceeding regardless.
  *
  * Generous by an order of magnitude: an `about:blank` guest is ready in milliseconds.
@@ -286,7 +315,15 @@ export function createPreviewWebview(parent: HTMLElement, partition: string): Pr
 			settle();
 		}, READY_TIMEOUT_MS);
 
-		if (element.isLoading?.() === false) settle();
+		// `isLoading()` throws *this very message* — "The WebView must be attached to the DOM
+		// and the dom-ready event emitted before this method can be called" — while the guest
+		// is still starting, which is the normal case at creation. That is an answer, not an
+		// error: it means "not yet", and the listener above is what will say when.
+		try {
+			if (element.isLoading?.() === false) settle();
+		} catch {
+			// Not ready yet. Wait for the event.
+		}
 	});
 
 	const ready = (): Promise<void> => readyPromise;
@@ -297,12 +334,12 @@ export function createPreviewWebview(parent: HTMLElement, partition: string): Pr
 		async run<T>(code: string): Promise<T> {
 			if (destroyed) throw new Error('The preview webview has been destroyed.');
 			await ready();
-			return (await element.executeJavaScript(code)) as T;
+			return (await retryWhileUnready(() => element.executeJavaScript(code), () => destroyed)) as T;
 		},
 		async printToPdf(options: PrintToPdfOptions): Promise<Uint8Array> {
 			if (destroyed) throw new Error('The preview webview has been destroyed.');
 			await ready();
-			return await element.printToPDF(options);
+			return await retryWhileUnready(() => element.printToPDF(options), () => destroyed);
 		},
 		setOffscreen(offscreen: boolean): void {
 			element.toggleClass(PREVIEW_OFFSCREEN_CLASS, offscreen);
