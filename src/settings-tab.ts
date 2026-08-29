@@ -261,6 +261,39 @@ export class MultiExporterSettingTab extends PluginSettingTab {
 			});
 		});
 
+		// The scale row is redrawn on toggle rather than merely disabled: "Fit to page" and a
+		// fixed percentage are alternatives, and leaving the number visible-but-ignored is how
+		// a settings page ends up lying about what it will do.
+		new Setting(editor)
+			.setName('Fit to page')
+			.setDesc(
+				'Shrink the whole document until its widest and tallest content fits inside the page box. ' +
+					'Measured on the finished pages, so it only ever scales down.',
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(profile.page.fitToPage).onChange(async (value) => {
+					profile.page.fitToPage = value;
+					await this.save();
+					this.display();
+				}),
+			);
+
+		if (!profile.page.fitToPage) {
+			new Setting(editor)
+				.setName('Print scale')
+				.setDesc('Percentage the finished pages are printed at, where 100 is unscaled.')
+				.addSlider((slider) =>
+					slider
+						.setLimits(40, 200, 5)
+						.setValue(clampPercent(profile.page.printScale))
+						.setDynamicTooltip()
+						.onChange(async (value) => {
+							profile.page.printScale = value;
+							await this.save();
+						}),
+				);
+		}
+
 		// Four inputs in one row is enough to break Obsidian's own Setting layout, so this row
 		// carries a class and lays itself out; see `.mx-margins-setting` in `styles.css`.
 		const margins = new Setting(editor)
@@ -283,7 +316,9 @@ export class MultiExporterSettingTab extends PluginSettingTab {
 
 		new Setting(editor)
 			.setName('Reset page to defaults')
-			.setDesc('Restores the shipped page size, orientation, margins and furniture. Leaves the stylesheet alone.')
+			.setDesc(
+				'Restores the shipped page size, orientation, scale, margins and furniture. Leaves the stylesheet alone.',
+			)
 			.addButton((button) =>
 				button.setButtonText('Reset page').onClick(async () => {
 					const template = createDefaultProfiles().find((candidate) => candidate.id === profile.id);
@@ -506,4 +541,16 @@ function describeDeleteFallout(settings: MultiExporterPlugin['settings'], profil
 		lines.push(`It is the default profile; “${next?.name ?? 'the first remaining profile'}” becomes the default.`);
 	}
 	return lines;
+}
+
+/**
+ * A persisted percentage the slider can actually display.
+ *
+ * `data.json` is user-editable and predates this field, so the value can be absent, a string
+ * or nonsense. The slider throws its handle off the track for anything outside its limits,
+ * which is a broken settings page over a number the export itself already clamps.
+ */
+function clampPercent(value: number): number {
+	if (!Number.isFinite(value)) return 100;
+	return Math.min(200, Math.max(40, Math.round(value / 5) * 5));
 }

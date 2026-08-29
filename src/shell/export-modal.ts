@@ -4,6 +4,7 @@ import { showDirectoryDialog } from '../adapter/obsidian-internals';
 import { planSeparateExport, singleNoteDestination } from '../core/export-plan';
 import { composeCss } from '../core/pipeline';
 import { resolveProfileForPath } from '../core/profile-resolver';
+import { structuredCloneProfile } from '../core/profiles';
 import type { PluginSettings, Profile } from '../core/types';
 import { announceOutcome, ExportService } from './export-service';
 import { PagedJsWebviewBackend, wrapDocumentSections } from './pagedjs-backend';
@@ -23,6 +24,14 @@ export class ExportModal extends Modal {
 	private exporting = false;
 	/** Output file name, without `.pdf`. Starts as the note's own name. */
 	private fileName: string;
+	/**
+	 * Per-export orientation, overriding the profile's own for this run only.
+	 *
+	 * `'profile'` — the default — means "whatever the profile says", which is not the same
+	 * thing as picking the value the profile currently holds: switching profile then has to
+	 * change the orientation too, and it does, because nothing was pinned.
+	 */
+	private orientation: 'profile' | 'portrait' | 'landscape' = 'profile';
 	/**
 	 * The pagination currently in flight, plus whether another was asked for while it ran.
 	 *
@@ -72,6 +81,20 @@ export class ExportModal extends Modal {
 				void this.repaginate();
 			});
 		});
+
+		new Setting(controls)
+			.setName('Orientation')
+			.setDesc('For this export only. The profile is not modified.')
+			.addDropdown((dropdown) => {
+				dropdown.addOption('profile', 'Profile default');
+				dropdown.addOption('portrait', 'Portrait');
+				dropdown.addOption('landscape', 'Landscape');
+				dropdown.setValue(this.orientation);
+				dropdown.onChange((value) => {
+					this.orientation = value === 'portrait' || value === 'landscape' ? value : 'profile';
+					void this.repaginate();
+				});
+			});
 
 		new Setting(controls)
 			.setName('File name')
@@ -137,18 +160,33 @@ export class ExportModal extends Modal {
 		}
 	}
 
+	/**
+	 * The profile as this export will actually use it.
+	 *
+	 * A copy whenever the orientation is overridden — never a mutation of the settings
+	 * object. The profile in settings is shared with every other export and with the settings
+	 * tab, and a per-export choice that quietly rewrote it would outlive the modal.
+	 */
+	private effectiveProfile(): Profile {
+		if (this.orientation === 'profile') return this.profile;
+		const copy = structuredCloneProfile(this.profile);
+		copy.page.orientation = this.orientation;
+		return copy;
+	}
+
 	private async paginateOnce(): Promise<void> {
 		const backend = this.backend;
 		if (backend === null || this.exporting) return;
 		this.setStatus('Rendering…');
 
 		try {
-			const prepared = await this.service.prepareDocument(this.file.path, this.file.basename, this.profile);
+			const profile = this.effectiveProfile();
+			const prepared = await this.service.prepareDocument(this.file.path, this.file.basename, profile);
 			this.setStatus('Paginating…');
 			const result = await backend.paginate({
 				html: wrapDocumentSections([prepared.note]),
-				css: composeCss(this.profile),
-				page: this.profile.page,
+				css: composeCss(profile),
+				page: profile.page,
 			});
 			const warnings = prepared.report.warnings.length + prepared.report.errors.length;
 			if (warnings > 0) console.warn('[multi-exporter] preview report', prepared.report.toLines());
@@ -190,7 +228,7 @@ export class ExportModal extends Modal {
 				profiles: this.settings.profiles,
 				folderProfiles: this.settings.folderProfiles,
 				defaultProfileId: this.settings.defaultProfileId,
-				overrideProfile: this.profile,
+				overrideProfile: this.effectiveProfile(),
 			});
 			const note = plan.notes[0];
 			if (note !== undefined) {

@@ -65,6 +65,43 @@ mjx-container svg { max-width: 100%; height: auto; }
 .mx-doc-title { string-set: doctitle content(text); }
 .mx-doc-date { string-set: docdate content(text); }
 
+/* Annotations, drawn from md-annotation's records rather than from its rendered output —
+   see core/annotations.ts. Everything here is a *default*: the colours come from the
+   category's own settings as an inline style (which this loses to), and a profile stylesheet
+   comes after this block (so it wins everything else).
+
+   The neutral background exists so an annotation in a category with no colour configured is
+   still visibly an annotation on paper. */
+.mx-annotation { background-color: rgba(0, 0, 0, 0.08); }
+.mx-annotation-marker { font-size: 0.7em; line-height: 0; vertical-align: super; padding-left: 0.15em; }
+
+/* Gutter cards. A span, not an aside or a div, because the serialised HTML is re-parsed in
+   the guest webview and the parser hoists flow content out of a <p> — which would silently
+   move every card to the end of its paragraph. display:block gives it a box anyway.
+
+   The card floats out into the page margin by the width of the gutter plus a gap, so it
+   costs the text column nothing. Both are variables: a profile with a 0.5in margin has no
+   room for a 1.4in card and can say so in one line. */
+:root { --mx-gutter-width: 1.35in; --mx-gutter-gap: 0.15in; }
+.mx-annotation-card {
+	display: block;
+	float: right;
+	clear: right;
+	width: var(--mx-gutter-width);
+	margin-right: calc(-1 * (var(--mx-gutter-width) + var(--mx-gutter-gap)));
+	margin-bottom: 0.6em;
+	font-size: 0.75em;
+	line-height: 1.35;
+	text-indent: 0;
+	break-inside: avoid;
+}
+.mx-annotation-card-num { font-weight: 600; padding-right: 0.4em; }
+
+/* Endnotes. The value attribute on each list item carries the printed number, so a note that was located but
+   whose neighbour was not still reads consecutively with the markers in the text. */
+.mx-endnotes-quote { font-style: italic; }
+.mx-endnotes-quote::after { content: " — "; font-style: normal; }
+
 /* Every note starts its own page in a merged export. Without this the notes simply flow into
    one another: one page ends up holding the tail of one note and the head of the next, which
    makes a running head and a per-note page count meaningless — there is no single answer for

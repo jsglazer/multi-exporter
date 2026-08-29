@@ -4407,6 +4407,43 @@ mjx-container svg { max-width: 100%; height: auto; }
 .mx-doc-title { string-set: doctitle content(text); }
 .mx-doc-date { string-set: docdate content(text); }
 
+/* Annotations, drawn from md-annotation's records rather than from its rendered output \u2014
+   see core/annotations.ts. Everything here is a *default*: the colours come from the
+   category's own settings as an inline style (which this loses to), and a profile stylesheet
+   comes after this block (so it wins everything else).
+
+   The neutral background exists so an annotation in a category with no colour configured is
+   still visibly an annotation on paper. */
+.mx-annotation { background-color: rgba(0, 0, 0, 0.08); }
+.mx-annotation-marker { font-size: 0.7em; line-height: 0; vertical-align: super; padding-left: 0.15em; }
+
+/* Gutter cards. A span, not an aside or a div, because the serialised HTML is re-parsed in
+   the guest webview and the parser hoists flow content out of a <p> \u2014 which would silently
+   move every card to the end of its paragraph. display:block gives it a box anyway.
+
+   The card floats out into the page margin by the width of the gutter plus a gap, so it
+   costs the text column nothing. Both are variables: a profile with a 0.5in margin has no
+   room for a 1.4in card and can say so in one line. */
+:root { --mx-gutter-width: 1.35in; --mx-gutter-gap: 0.15in; }
+.mx-annotation-card {
+	display: block;
+	float: right;
+	clear: right;
+	width: var(--mx-gutter-width);
+	margin-right: calc(-1 * (var(--mx-gutter-width) + var(--mx-gutter-gap)));
+	margin-bottom: 0.6em;
+	font-size: 0.75em;
+	line-height: 1.35;
+	text-indent: 0;
+	break-inside: avoid;
+}
+.mx-annotation-card-num { font-weight: 600; padding-right: 0.4em; }
+
+/* Endnotes. The value attribute on each list item carries the printed number, so a note that was located but
+   whose neighbour was not still reads consecutively with the markers in the text. */
+.mx-endnotes-quote { font-style: italic; }
+.mx-endnotes-quote::after { content: " \u2014 "; font-style: normal; }
+
 /* Every note starts its own page in a merged export. Without this the notes simply flow into
    one another: one page ends up holding the tail of one note and the head of the next, which
    makes a running head and a per-note page count meaningless \u2014 there is no single answer for
@@ -4500,6 +4537,8 @@ function defaultPage() {
     suppressFirstPageFurniture: false,
     keepHeadingsWithText: true,
     pageNumbering: "per-note",
+    fitToPage: false,
+    printScale: 100,
     orphans: 2,
     widows: 2
   };
@@ -4887,15 +4926,38 @@ function getPluginStringSetting(app, pluginId, key) {
   const value = settings[key];
   return typeof value === "string" ? value : null;
 }
-var MD_ANNOTATION_CLASSES = {
-  host: "gutter-host",
-  card: "gutter-card",
-  text: "gutter-text",
-  number: "gutter-num",
-  hidden: "gutter-hidden",
-  leader: "gutter-leader",
-  tick: "gutter-tick"
+var MD_ANNOTATION_STRIP_CLASSES = {
+  unwrap: ["mdann-hl", "mdann-anchor"],
+  remove: ["mdann-marker", "mdann-gutter-host", "mdann-gutter-card", "mdann-gutter-leader", "mdann-gutter-tick"]
 };
+function getMdAnnotationCategoryColors(app, pluginId) {
+  var _a, _b;
+  const settings = (_b = (_a = pluginRegistry(app)) == null ? void 0 : _a.plugins[pluginId]) == null ? void 0 : _b.settings;
+  const styles = settings == null ? void 0 : settings["categoryStyles"];
+  if (styles === null || typeof styles !== "object") return {};
+  const out = {};
+  for (const [name, value] of Object.entries(styles)) {
+    if (value === null || typeof value !== "object") continue;
+    const style = value;
+    if (style.use === false) continue;
+    const light = style.light;
+    if (light === null || typeof light !== "object") continue;
+    const parts = light;
+    const color = {};
+    const foreground = enabledColor(parts.fr);
+    const background = enabledColor(parts.bg);
+    if (foreground !== null) color.foreground = foreground;
+    if (background !== null) color.background = background;
+    if (color.foreground !== void 0 || color.background !== void 0) out[name] = color;
+  }
+  return out;
+}
+function enabledColor(option) {
+  if (option === null || typeof option !== "object") return null;
+  const candidate = option;
+  if (candidate.enabled !== true) return null;
+  return typeof candidate.color === "string" && candidate.color !== "" ? candidate.color : null;
+}
 var DialogUnavailableError = class extends Error {
   constructor() {
     super("Electron's file dialog could not be reached, so there was nowhere to write the export.");
@@ -5042,6 +5104,9 @@ function toArray(list) {
   }
   return out;
 }
+function isElement(node) {
+  return node.nodeType === NODE_TYPE_ELEMENT;
+}
 function isText(node) {
   return node.nodeType === NODE_TYPE_TEXT;
 }
@@ -5061,51 +5126,283 @@ function walkTextNodes(root, skipTags, visit) {
   }
 }
 
-// src/core/annotations.ts
-function planAnnotations(root, mode, classes) {
-  const hosts = toArray(root.querySelectorAll(`.${classes.host}`));
-  const leaders = toArray(root.querySelectorAll(`.${classes.leader}`));
-  if (mode === "off") {
-    return {
-      mode,
-      keepGutters: false,
-      removeGutters: true,
-      endnotes: [],
-      removals: [...hosts, ...leaders, ...toArray(root.querySelectorAll(`.${classes.tick}`))],
-      noGutterHost: hosts.length === 0
-    };
-  }
-  if (mode === "gutter") {
-    return {
-      mode,
-      keepGutters: hosts.length > 0,
-      removeGutters: false,
-      endnotes: [],
-      // Leader lines are a live-editor affordance; they have no meaning on paper.
-      removals: leaders,
-      noGutterHost: hosts.length === 0
-    };
-  }
-  const endnotes = [];
-  for (const card of toArray(root.querySelectorAll(`.${classes.card}`))) {
-    const text = annotationText(card, classes);
-    if (text === "") continue;
-    endnotes.push({ number: endnotes.length + 1, text, source: card });
-  }
-  return {
-    mode,
-    keepGutters: false,
-    removeGutters: true,
-    endnotes,
-    removals: [...hosts, ...leaders],
-    noGutterHost: hosts.length === 0
+// src/core/annotation-match.ts
+var MIN_CONFIDENCE = 0.75;
+var AMBIGUITY_MARGIN = 0.05;
+var ANCHOR_LENGTH = 16;
+var SKIP_TAGS = /* @__PURE__ */ new Set(["script", "style", "code", "pre", "textarea", "svg", "math"]);
+function flattenText(root, skipClasses = []) {
+  const runs = [];
+  let text = "";
+  const visit = (node) => {
+    var _a;
+    if (isText(node)) {
+      const value = (_a = node.textContent) != null ? _a : "";
+      if (value === "") return;
+      runs.push({ node, start: text.length, end: text.length + value.length });
+      text += value;
+      return;
+    }
+    if (node.nodeType !== NODE_TYPE_ELEMENT) return;
+    if (SKIP_TAGS.has(tagName(node))) return;
+    if (isElement(node) && skipClasses.some((cls) => node.classList.contains(cls))) return;
+    for (const child of toArray(node.childNodes)) visit(child);
   };
+  for (const child of toArray(root.childNodes)) visit(child);
+  return { text, runs };
 }
-function annotationText(card, classes) {
-  var _a;
-  const body = toArray(card.querySelectorAll(`.${classes.text}`))[0];
-  const target = body != null ? body : card;
-  return ((_a = target.textContent) != null ? _a : "").replace(/\s+/g, " ").trim();
+function runsForRange(flat, start, end) {
+  const out = [];
+  for (const run2 of flat.runs) {
+    if (run2.end <= start || run2.start >= end) continue;
+    const from = Math.max(start, run2.start) - run2.start;
+    const to = Math.min(end, run2.end) - run2.start;
+    if (to > from) out.push({ node: run2.node, from, to });
+  }
+  return out;
+}
+function runForCaret(flat, at) {
+  for (const run2 of flat.runs) {
+    if (at >= run2.start && at <= run2.end) return { node: run2.node, offset: at - run2.start };
+  }
+  return null;
+}
+function locate(flat, selector) {
+  if (selector.exact === "") return locateCaret(flat, selector);
+  const exact = byExact(flat, selector);
+  if (exact !== null) return exact;
+  const normalised = byNormalised(flat, selector);
+  if (normalised !== null) return normalised;
+  const anchored = byAnchor(flat, selector);
+  if (anchored !== null) return anchored;
+  return byFuzzySweep(flat, selector);
+}
+function byExact(flat, selector) {
+  const hits = occurrences(flat, selector.exact);
+  if (hits.length === 0) return null;
+  if (hits.length === 1) {
+    const start = hits[0];
+    return { start, end: start + selector.exact.length, confidence: 1 };
+  }
+  return disambiguate(flat, selector, hits, selector.exact.length);
+}
+function disambiguate(flat, selector, starts, length) {
+  const scored = starts.map((start) => ({ start, score: contextScore(flat, start, start + length, selector) })).sort((a, b) => b.score - a.score);
+  const best = scored[0];
+  const runnerUp = scored[1];
+  if (best === void 0) return null;
+  if (runnerUp !== void 0 && best.score - runnerUp.score < AMBIGUITY_MARGIN) return null;
+  return { start: best.start, end: best.start + length, confidence: Math.max(MIN_CONFIDENCE, best.score) };
+}
+function contextScore(flat, start, end, selector) {
+  const scores = [];
+  const prefixKey = contextKey(selector.prefix);
+  if (prefixKey !== "") {
+    const window2 = contextKey(flat.slice(Math.max(0, start - selector.prefix.length), start));
+    scores.push(similarity(prefixKey, window2.slice(-prefixKey.length)));
+  }
+  const suffixKey = contextKey(selector.suffix);
+  if (suffixKey !== "") {
+    const window2 = contextKey(flat.slice(end, end + selector.suffix.length));
+    scores.push(similarity(suffixKey, window2.slice(0, suffixKey.length)));
+  }
+  if (scores.length === 0) return 0.5;
+  return scores.reduce((sum2, value) => sum2 + value, 0) / scores.length;
+}
+function contextKey(text) {
+  return text.replace(/\|/g, " ").replace(/\s+/g, " ").trim();
+}
+function byNormalised(flat, selector) {
+  const collapsed = collapse(flat);
+  const needle = collapse(selector.exact).text;
+  if (needle === "") return null;
+  const hits = occurrences(collapsed.text, needle);
+  if (hits.length === 0) return null;
+  const map = (index) => {
+    var _a;
+    return (_a = collapsed.offsets[index]) != null ? _a : flat.length;
+  };
+  if (hits.length === 1) {
+    const start = hits[0];
+    return { start: map(start), end: map(start + needle.length - 1) + 1, confidence: 0.95 };
+  }
+  const picked = disambiguate(collapsed.text, { ...selector, exact: needle }, hits, needle.length);
+  if (picked === null) return null;
+  return { start: map(picked.start), end: map(picked.end - 1) + 1, confidence: Math.min(picked.confidence, 0.95) };
+}
+function collapse(text) {
+  let out = "";
+  const offsets = [];
+  let pendingSpace = false;
+  for (let i3 = 0; i3 < text.length; i3++) {
+    const char = text[i3];
+    if (/\s/.test(char)) {
+      pendingSpace = out !== "";
+      continue;
+    }
+    if (pendingSpace) {
+      out += " ";
+      offsets.push(i3);
+      pendingSpace = false;
+    }
+    out += char;
+    offsets.push(i3);
+  }
+  return { text: out, offsets };
+}
+function byAnchor(flat, selector) {
+  const anchor = selector.prefix.slice(-ANCHOR_LENGTH);
+  if (anchor.trim() === "") return null;
+  const hits = occurrences(flat, anchor);
+  if (hits.length === 0 || hits.length > 8) return null;
+  let best = null;
+  for (const hit of hits) {
+    const start = hit + anchor.length;
+    const end = Math.min(flat.length, start + selector.exact.length);
+    const score = similarity(selector.exact, flat.slice(start, end));
+    if (score < MIN_CONFIDENCE) continue;
+    if (best === null || score > best.confidence) best = { start, end, confidence: score };
+  }
+  return best;
+}
+function byFuzzySweep(flat, selector) {
+  const length = selector.exact.length;
+  if (length < 8 || flat.length < length) return null;
+  const coarse = Math.max(1, Math.floor(length / 4));
+  let bestStart = -1;
+  let bestScore = 0;
+  for (let start = 0; start + length <= flat.length; start += coarse) {
+    const score = similarity(selector.exact, flat.slice(start, start + length));
+    if (score > bestScore) {
+      bestScore = score;
+      bestStart = start;
+    }
+  }
+  if (bestStart < 0 || bestScore < MIN_CONFIDENCE - 0.1) return null;
+  for (let start = Math.max(0, bestStart - coarse); start <= Math.min(flat.length - length, bestStart + coarse); start++) {
+    const score = similarity(selector.exact, flat.slice(start, start + length));
+    if (score > bestScore) {
+      bestScore = score;
+      bestStart = start;
+    }
+  }
+  if (bestScore < MIN_CONFIDENCE) return null;
+  return { start: bestStart, end: bestStart + length, confidence: bestScore };
+}
+function locateCaret(flat, selector) {
+  const prefixAnchor = selector.prefix.slice(-ANCHOR_LENGTH);
+  if (prefixAnchor.trim() !== "") {
+    const hits2 = occurrences(flat, prefixAnchor);
+    if (hits2.length === 1) {
+      const at2 = hits2[0] + prefixAnchor.length;
+      return { start: at2, end: at2, confidence: 1 };
+    }
+    if (hits2.length > 1) {
+      const scored = hits2.map((hit) => ({ at: hit + prefixAnchor.length, score: similarity(selector.suffix, flat.slice(hit + prefixAnchor.length, hit + prefixAnchor.length + selector.suffix.length)) })).sort((a, b) => b.score - a.score);
+      const best = scored[0];
+      const runnerUp = scored[1];
+      if (best !== void 0 && (runnerUp === void 0 || best.score - runnerUp.score >= AMBIGUITY_MARGIN)) {
+        return { start: best.at, end: best.at, confidence: Math.max(MIN_CONFIDENCE, best.score) };
+      }
+    }
+  }
+  const suffixAnchor = selector.suffix.slice(0, ANCHOR_LENGTH);
+  if (suffixAnchor.trim() === "") return null;
+  const hits = occurrences(flat, suffixAnchor);
+  if (hits.length !== 1) return null;
+  const at = hits[0];
+  return { start: at, end: at, confidence: 0.9 };
+}
+var OCCURRENCE_LIMIT = 4096;
+function occurrences(haystack, needle) {
+  if (needle === "") return [];
+  const out = [];
+  let from = 0;
+  for (; ; ) {
+    const index = haystack.indexOf(needle, from);
+    if (index < 0) return out;
+    out.push(index);
+    from = index + needle.length;
+    if (out.length >= OCCURRENCE_LIMIT) return out;
+  }
+}
+function similarity(a, b) {
+  var _a, _b;
+  if (a === b) return 1;
+  if (a.length < 2 || b.length < 2) return a === b ? 1 : 0;
+  const counts = /* @__PURE__ */ new Map();
+  for (let i3 = 0; i3 < a.length - 1; i3++) {
+    const gram = a.slice(i3, i3 + 2);
+    counts.set(gram, ((_a = counts.get(gram)) != null ? _a : 0) + 1);
+  }
+  let shared = 0;
+  for (let i3 = 0; i3 < b.length - 1; i3++) {
+    const gram = b.slice(i3, i3 + 2);
+    const available = (_b = counts.get(gram)) != null ? _b : 0;
+    if (available > 0) {
+      counts.set(gram, available - 1);
+      shared++;
+    }
+  }
+  return 2 * shared / (a.length - 1 + (b.length - 1));
+}
+
+// src/core/annotations.ts
+function planAnnotationStrip(root, classes) {
+  const collect = (names) => {
+    const seen = /* @__PURE__ */ new Set();
+    for (const name of names) {
+      for (const element of toArray(root.querySelectorAll(`.${name}`))) seen.add(element);
+    }
+    return [...seen];
+  };
+  const remove = collect(classes.remove);
+  const removeSet = new Set(remove);
+  return { unwrap: collect(classes.unwrap).filter((element) => !removeSet.has(element)), remove };
+}
+function planAnnotations(root, mode, records, skipClasses = []) {
+  if (mode === "off" || records.length === 0) {
+    return { mode, placements: [], notes: [], unmatched: [] };
+  }
+  const flat = flattenText(root, skipClasses);
+  const placements = [];
+  const unmatched = [];
+  for (const record of records) {
+    const found = locate(flat.text, record.selector);
+    if (found === null) {
+      unmatched.push(record);
+      continue;
+    }
+    const wraps = found.end > found.start ? runsForRange(flat, found.start, found.end) : [];
+    const caret = runForCaret(flat, found.end);
+    if (wraps.length === 0 && caret === null) {
+      unmatched.push(record);
+      continue;
+    }
+    placements.push({
+      annotation: record,
+      number: 0,
+      wraps: wraps.map((run2) => ({ node: run2.node, from: run2.from, to: run2.to })),
+      caret,
+      at: found.start,
+      confidence: found.confidence
+    });
+  }
+  placements.sort((a, b) => a.at - b.at);
+  const notes = [];
+  for (const placement of placements) {
+    const record = placement.annotation;
+    if (record.comment.trim() === "") continue;
+    placement.number = notes.length + 1;
+    notes.push({
+      number: placement.number,
+      quote: record.selector.exact,
+      comment: record.comment,
+      category: record.category,
+      author: record.author
+    });
+  }
+  return { mode, placements, notes, unmatched };
 }
 
 // src/core/backend.ts
@@ -5545,13 +5842,33 @@ async function prepareDocument(note, citeKeySet, deps, report) {
       });
       deps.transforms.applyImageSubstitutions(rendered, result.substitutions);
     }
-    const annotations = planAnnotations(rendered.root, flags.annotationMode, deps.annotationClasses);
-    if (annotations.removals.length > 0) deps.transforms.removeElements(rendered, annotations.removals);
-    if (annotations.endnotes.length > 0) deps.transforms.appendEndnotes(rendered, annotations.endnotes);
+    await applyAnnotations(rendered, note, deps, report);
     return { sourcePath: note.sourcePath, title: note.title, html: deps.transforms.serialize(rendered) };
   } finally {
     deps.renderer.release(rendered);
   }
+}
+async function applyAnnotations(rendered, note, deps, report) {
+  const mode = note.profile.flags.annotationMode;
+  const strip = planAnnotationStrip(rendered.root, deps.annotationStripClasses);
+  if (strip.unwrap.length > 0 || strip.remove.length > 0) deps.transforms.stripPluginAnnotations(rendered, strip);
+  if (mode === "off" || !deps.annotations.available) return;
+  const records = await deps.annotations.getAnnotations(note.sourcePath);
+  if (records.length === 0) return;
+  const plan = planAnnotations(rendered.root, mode, records, [ANNOTATION_SKIP_CLASSES.bibliography]);
+  deps.transforms.applyAnnotations(rendered, plan, deps.annotations.categoryColors);
+  for (const orphan of plan.unmatched) {
+    report.warn(
+      "annotation-unmatched",
+      `An annotation could not be located in the rendered note, so it was left out: "${excerpt(orphan)}"`,
+      note.sourcePath
+    );
+  }
+}
+var ANNOTATION_SKIP_CLASSES = { bibliography: "mx-bibliography" };
+function excerpt(record) {
+  const text = (record.selector.exact === "" ? record.comment : record.selector.exact).replace(/\s+/g, " ").trim();
+  return text.length > 60 ? `${text.slice(0, 57)}\u2026` : text;
 }
 function composeCss(profile) {
   return `${BASE_DOCUMENT_CSS}
@@ -5696,6 +6013,83 @@ function withTimeout(promise, timeoutMs) {
       }
     );
   });
+}
+
+// src/shell/md-annotation.ts
+var MD_ANNOTATION_ID = "md-annotation";
+function asApi(candidate) {
+  if (candidate === null || typeof candidate !== "object") return null;
+  const api = candidate;
+  return typeof api.getAnnotations === "function" ? api : null;
+}
+function resolveAnnotationGate(app, enabled) {
+  if (!enabled) return { provider: unavailableProvider(), reason: "ok" };
+  if (!isPluginEnabled(app, MD_ANNOTATION_ID)) {
+    return { provider: unavailableProvider(), reason: "not-installed" };
+  }
+  const api = asApi(getPluginApi(app, MD_ANNOTATION_ID));
+  if (api === null) return { provider: unavailableProvider(), reason: "wrong-shape" };
+  const categoryColors = getMdAnnotationCategoryColors(app, MD_ANNOTATION_ID);
+  return {
+    reason: "ok",
+    provider: {
+      available: true,
+      categoryColors,
+      async getAnnotations(sourcePath) {
+        try {
+          const raw = await api.getAnnotations(sourcePath);
+          return Array.isArray(raw) ? raw.map(toRecord).filter(isRecord) : [];
+        } catch (e) {
+          return [];
+        }
+      }
+    }
+  };
+}
+function toRecord(value) {
+  var _a;
+  if (value === null || typeof value !== "object") return null;
+  const raw = value;
+  if (typeof raw["id"] !== "string") return null;
+  if (raw["type"] !== "highlight" && raw["type"] !== "comment") return null;
+  const selector = raw["selector"];
+  if (selector === null || typeof selector !== "object") return null;
+  const parts = selector;
+  if (typeof parts["exact"] !== "string" || typeof parts["prefix"] !== "string" || typeof parts["suffix"] !== "string") {
+    return null;
+  }
+  const category = (_a = raw["category"]) != null ? _a : raw["format"];
+  return {
+    id: raw["id"],
+    type: raw["type"],
+    category: typeof category === "string" ? category : "",
+    selector: { exact: parts["exact"], prefix: parts["prefix"], suffix: parts["suffix"] },
+    comment: typeof raw["comment"] === "string" ? raw["comment"] : "",
+    author: typeof raw["author"] === "string" ? raw["author"] : "",
+    status: raw["status"] === "closed" ? "closed" : "open"
+  };
+}
+function isRecord(value) {
+  return value !== null;
+}
+function unavailableProvider() {
+  return {
+    available: false,
+    categoryColors: {},
+    getAnnotations: () => Promise.resolve([])
+  };
+}
+function describeAnnotationGateReason(reason) {
+  switch (reason) {
+    case "not-installed":
+      return "md-annotation is not installed or not enabled, so annotations were skipped.";
+    case "disabled":
+      return "Annotations are off for this profile.";
+    case "wrong-shape":
+      return "md-annotation did not expose a getAnnotations API, so annotations were skipped.";
+    case "ok":
+      return "";
+  }
 }
 
 // vendor-text:/Users/josh/Dev/2-Projects/Obsidian/multi-exporter/vendor/pagedjs/paged.polyfill.js
@@ -38998,6 +39392,11 @@ var READY_FLAG = "__mxPagedReady";
 var PAGINATION_POLL_MS = 1e3;
 var PAGINATION_STALL_MS = 9e4;
 var RUNAWAY_PAGE_CEILING = 5e3;
+var MIN_PRINT_SCALE = 0.4;
+function clampScale(value) {
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  return Math.min(2, Math.max(MIN_PRINT_SCALE, value));
+}
 var PagedJsWebviewBackend = class {
   constructor(host) {
     this.host = host;
@@ -39106,6 +39505,7 @@ var PagedJsWebviewBackend = class {
     await this.applyNumbering(webview, request.profile.page.pageNumbering, map.pageCount, documentStartPages);
     if (cancelled()) throw new ExportCancelled();
     (_b = request.onProgress) == null ? void 0 : _b.call(request, 0.7, "Printing");
+    const scale2 = await this.resolveScale(webview, request.profile.page);
     const pdf = await webview.printToPdf({
       printBackground: true,
       // The furniture is already elements in the paginated DOM, so Chromium is asked
@@ -39113,7 +39513,8 @@ var PagedJsWebviewBackend = class {
       // footer template. Its template API could not express this furniture anyway.
       preferCSSPageSize: true,
       margins: { marginType: "none" },
-      landscape: request.profile.page.orientation === "landscape"
+      landscape: request.profile.page.orientation === "landscape",
+      scale: scale2
     });
     if (cancelled()) throw new ExportCancelled();
     (_c = request.onProgress) == null ? void 0 : _c.call(request, 0.85, "Building outline");
@@ -39245,6 +39646,30 @@ var PagedJsWebviewBackend = class {
    * indistinguishable from "the preview only rendered part of the note", and there is
    * nothing in the DOM to inspect afterwards that says so. This says so.
    */
+  /**
+   * The print scale for this export.
+   *
+   * `fitToPage` off is the simple case: the profile's percentage, verbatim. On, the guest
+   * measures the worst overflow across the finished pages and this prints at exactly the
+   * scale that brings it inside the page box.
+   *
+   * Measured **after** pagination rather than estimated before it, because "does it fit"
+   * is a fact about the laid-out page and nothing else — the same table fits Letter
+   * landscape and overflows A5 portrait. A measurement that cannot be taken (a guest that
+   * will not answer, a document with no pages) falls back to 1: printing unscaled is the
+   * behaviour every previous version had, and is never worse than printing at a scale
+   * derived from a failed measurement.
+   */
+  async resolveScale(webview, page) {
+    if (page.fitToPage !== true) return clampScale(page.printScale / 100);
+    try {
+      const measured = await webview.run(FIT_SCALE_SCRIPT);
+      return clampScale(measured);
+    } catch (error2) {
+      console.debug("[multi-exporter] fit-to-page measurement unavailable; printing unscaled", error2);
+      return 1;
+    }
+  }
   async reportOverflow(webview) {
     try {
       const report = await webview.run(DIAGNOSTIC_SCRIPT);
@@ -39509,6 +39934,21 @@ var DIAGNOSTIC_SCRIPT = `(() => {
 		oversized: oversized.slice(0, 20),
 		contentBox,
 	};
+})()`;
+var FIT_SCALE_SCRIPT = `(() => {
+	const box = document.querySelector('.pagedjs_page_content');
+	if (!box) return 1;
+	const width = box.clientWidth;
+	const height = box.clientHeight;
+	if (!width || !height) return 1;
+	let worst = 1;
+	document.querySelectorAll('.pagedjs_page_content *').forEach((element) => {
+		if (element.children.length > 0) return;
+		const rect = element.getBoundingClientRect();
+		if (!rect.width && !rect.height) return;
+		worst = Math.max(worst, rect.width / width, rect.height / height);
+	});
+	return 1 / worst;
 })()`;
 var DOCUMENT_START_PAGES_SCRIPT = `(() => {
 	const pages = Array.from(document.querySelectorAll('.pagedjs_page'));
@@ -55111,6 +55551,9 @@ var CITATION_CLASS = "mx-citation";
 var BIBLIOGRAPHY_CLASS = "mx-bibliography";
 var ENDNOTES_CLASS = "mx-endnotes";
 var FAILED_IMAGE_CLASS = "mx-image-failed";
+var ANNOTATION_CLASS = "mx-annotation";
+var ANNOTATION_MARKER_CLASS = "mx-annotation-marker";
+var ANNOTATION_CARD_CLASS = "mx-annotation-card";
 var DomTransforms = class {
   applyImageSubstitutions(_note, substitutions) {
     for (const substitution of substitutions) {
@@ -55140,14 +55583,52 @@ var DomTransforms = class {
       element.detach();
     }
   }
-  appendEndnotes(note, endnotes) {
-    const root = note.root;
-    const section = root.createDiv({ cls: ENDNOTES_CLASS });
-    section.createEl("h2", { text: "Notes" });
-    const list = section.createEl("ol");
-    for (const endnote of endnotes) {
-      list.createEl("li", { text: endnote.text });
+  /**
+   * Take `md-annotation`'s own rendered markup back out.
+   *
+   * Unwrapping rather than removing is the whole point for highlight spans: the words
+   * inside them are the note's, and detaching the span would delete a sentence. `normalize()`
+   * afterwards re-joins the text nodes the unwrap leaves adjacent, so the annotation matcher
+   * sees one run of text where the reader sees one run of text.
+   */
+  stripPluginAnnotations(note, plan) {
+    for (const element of plan.remove) element.detach();
+    for (const element of plan.unwrap) {
+      const span = element;
+      const parent = span.parentNode;
+      if (parent === null) continue;
+      while (span.firstChild !== null) parent.insertBefore(span.firstChild, span);
+      parent.removeChild(span);
     }
+    note.root.normalize();
+  }
+  /**
+   * Draw the annotations the plan located.
+   *
+   * Every text node is rebuilt **once**, from all the operations that touch it, rather than
+   * being split per annotation. Splitting a text node renumbers every offset after the cut,
+   * so a second annotation in the same paragraph would land at the wrong character — and
+   * two annotations in one paragraph is the ordinary case, not the exotic one.
+   */
+  applyAnnotations(note, plan, colors) {
+    if (plan.mode === "off") return;
+    const byNode = /* @__PURE__ */ new Map();
+    const push = (node, op) => {
+      const text = node;
+      const list = byNode.get(text);
+      if (list === void 0) byNode.set(text, [op]);
+      else list.push(op);
+    };
+    for (const placement of plan.placements) {
+      for (const wrap of placement.wraps) {
+        push(wrap.node, { kind: "wrap", from: wrap.from, to: wrap.to, placement });
+      }
+      if (placement.number > 0 && placement.caret !== null) {
+        push(placement.caret.node, { kind: "marker", at: placement.caret.offset, placement });
+      }
+    }
+    for (const [node, ops] of byNode) rebuildTextNode(node, ops, plan, colors);
+    if (plan.mode === "endnotes" && plan.notes.length > 0) appendEndnotes(note, plan);
   }
   /**
    * Insert the bibliography `zotero-manager` produced.
@@ -55167,6 +55648,98 @@ var DomTransforms = class {
     return note.root.innerHTML;
   }
 };
+function rebuildTextNode(node, ops, plan, colors) {
+  var _a;
+  const parent = node.parentNode;
+  if (parent === null) return;
+  const text = (_a = node.nodeValue) != null ? _a : "";
+  const wraps = ops.filter((op) => op.kind === "wrap").sort((a, b) => a.from - b.from);
+  const markers = ops.filter((op) => op.kind === "marker").sort((a, b) => a.at - b.at);
+  const document = node.ownerDocument;
+  const fragment = document.createDocumentFragment();
+  let cursor = 0;
+  let markerIndex = 0;
+  const emitMarkersUpTo = (position) => {
+    while (markerIndex < markers.length) {
+      const marker = markers[markerIndex];
+      if (marker === void 0 || marker.at > position) break;
+      if (marker.at > cursor) {
+        fragment.appendChild(document.createTextNode(text.slice(cursor, marker.at)));
+        cursor = marker.at;
+      }
+      fragment.appendChild(buildMarker(document, marker.placement, plan.mode));
+      markerIndex++;
+    }
+  };
+  for (const wrap of wraps) {
+    const from = Math.max(wrap.from, cursor);
+    const to = Math.max(from, wrap.to);
+    if (to <= from) continue;
+    emitMarkersUpTo(from);
+    if (from > cursor) fragment.appendChild(document.createTextNode(text.slice(cursor, from)));
+    const span = document.createElement("span");
+    applyAnnotationStyle(span, wrap.placement, colors);
+    span.appendChild(document.createTextNode(text.slice(from, to)));
+    fragment.appendChild(span);
+    cursor = to;
+  }
+  emitMarkersUpTo(text.length);
+  if (cursor < text.length) fragment.appendChild(document.createTextNode(text.slice(cursor)));
+  parent.replaceChild(fragment, node);
+}
+function applyAnnotationStyle(span, placement, colors) {
+  const record = placement.annotation;
+  span.addClass(ANNOTATION_CLASS);
+  if (record.category !== "") {
+    span.addClass(`${ANNOTATION_CLASS}-cat-${slug(record.category)}`);
+    span.setAttribute("data-mx-category", record.category);
+  }
+  span.setAttribute("data-mx-annotation-id", record.id);
+  if (placement.number > 0) span.setAttribute("data-mx-note", String(placement.number));
+  const color = colors[record.category];
+  if ((color == null ? void 0 : color.background) !== void 0) span.style.setProperty("background-color", color.background);
+  if ((color == null ? void 0 : color.foreground) !== void 0) span.style.setProperty("color", color.foreground);
+}
+function buildMarker(document, placement, mode) {
+  const record = placement.annotation;
+  const marker = document.createElement("sup");
+  marker.addClass(ANNOTATION_MARKER_CLASS);
+  marker.setAttribute("data-mx-annotation-id", record.id);
+  marker.appendChild(document.createTextNode(String(placement.number)));
+  if (mode !== "gutter") return marker;
+  const holder = document.createDocumentFragment();
+  holder.appendChild(marker);
+  const card = document.createElement("span");
+  card.addClass(ANNOTATION_CARD_CLASS);
+  if (record.category !== "") card.setAttribute("data-mx-category", record.category);
+  const number = document.createElement("span");
+  number.addClass(`${ANNOTATION_CARD_CLASS}-num`);
+  number.appendChild(document.createTextNode(String(placement.number)));
+  card.appendChild(number);
+  const body = document.createElement("span");
+  body.addClass(`${ANNOTATION_CARD_CLASS}-text`);
+  body.appendChild(document.createTextNode(record.comment));
+  card.appendChild(body);
+  holder.appendChild(card);
+  return holder;
+}
+function appendEndnotes(note, plan) {
+  const root = note.root;
+  const section = root.createDiv({ cls: ENDNOTES_CLASS });
+  section.createEl("h2", { text: "Notes" });
+  const list = section.createEl("ol");
+  for (const entry of plan.notes) {
+    const item = list.createEl("li");
+    item.setAttribute("value", String(entry.number));
+    if (entry.quote !== "") {
+      item.createEl("span", { cls: `${ENDNOTES_CLASS}-quote`, text: entry.quote });
+    }
+    item.createEl("span", { cls: `${ENDNOTES_CLASS}-comment`, text: entry.comment });
+  }
+}
+function slug(name) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "unnamed";
+}
 
 // src/shell/zotero.ts
 var ZOTERO_MANAGER_ID = "zotero-manager";
@@ -55179,14 +55752,14 @@ function asApiV1(candidate) {
   return api;
 }
 async function resolveCitationGate(app, enabled) {
-  if (!enabled) return { provider: unavailableProvider(), reason: "ok" };
+  if (!enabled) return { provider: unavailableProvider2(), reason: "ok" };
   if (!isPluginEnabled(app, ZOTERO_MANAGER_ID)) {
-    return { provider: unavailableProvider(), reason: "not-installed" };
+    return { provider: unavailableProvider2(), reason: "not-installed" };
   }
   const api = asApiV1(getPluginApi(app, ZOTERO_MANAGER_ID));
-  if (api === null) return { provider: unavailableProvider(), reason: "wrong-version" };
+  if (api === null) return { provider: unavailableProvider2(), reason: "wrong-version" };
   const reachable = await api.isAvailable().catch(() => false);
-  if (!reachable) return { provider: unavailableProvider(), reason: "unreachable" };
+  if (!reachable) return { provider: unavailableProvider2(), reason: "unreachable" };
   const template = getPluginStringSetting(app, ZOTERO_MANAGER_ID, "citeSuggestTemplate");
   const wikilinkDetection = isWikilinkShapedTemplate(template);
   return {
@@ -55213,7 +55786,7 @@ async function resolveCitationGate(app, enabled) {
     }
   };
 }
-function unavailableProvider() {
+function unavailableProvider2() {
   return {
     available: false,
     wikilinkDetection: false,
@@ -55285,12 +55858,17 @@ var ExportService = class {
         report.once("warning", `citations-${gate.reason}`, describeGateReason(gate.reason));
       }
       const citeKeys = gate.provider.available ? await gate.provider.getAllCiteKeys() : /* @__PURE__ */ new Set();
+      const annotations = resolveAnnotationGate(this.app, profile.flags.annotationMode !== "off");
+      if (annotations.reason !== "ok") {
+        report.once("warning", `annotations-${annotations.reason}`, describeAnnotationGateReason(annotations.reason));
+      }
       const deps = {
         renderer: new ObsidianDocumentRenderer(this.app, host),
         citations: gate.provider,
+        annotations: annotations.provider,
         images: new ObsidianImageSource(this.app),
         transforms: this.transforms,
-        annotationClasses: MD_ANNOTATION_CLASSES,
+        annotationStripClasses: MD_ANNOTATION_STRIP_CLASSES,
         imageFetchTimeoutMs: settings.imageFetchTimeoutMs
       };
       const prepared = await prepareDocument(
@@ -55317,16 +55895,26 @@ var ExportService = class {
     if (gate.reason !== "ok") {
       report.once("warning", `citations-${gate.reason}`, describeGateReason(gate.reason));
     }
+    const wantsAnnotations = options.plan.notes.some((note) => note.profile.flags.annotationMode !== "off");
+    const annotationGate = resolveAnnotationGate(this.app, wantsAnnotations);
+    if (annotationGate.reason !== "ok") {
+      report.once(
+        "warning",
+        `annotations-${annotationGate.reason}`,
+        describeAnnotationGateReason(annotationGate.reason)
+      );
+    }
     const deps = {
       renderer: new ObsidianDocumentRenderer(this.app, host),
       citations: gate.provider,
+      annotations: annotationGate.provider,
       images: new ObsidianImageSource(this.app),
       transforms: this.transforms,
       backend,
       writer: this.writer,
       outline: this.outline,
       compressor: this.compressor,
-      annotationClasses: MD_ANNOTATION_CLASSES,
+      annotationStripClasses: MD_ANNOTATION_STRIP_CLASSES,
       imageFetchTimeoutMs: settings.imageFetchTimeoutMs,
       ...options.onProgress === void 0 ? {} : { onProgress: options.onProgress },
       ...options.isCancelled === void 0 ? {} : { isCancelled: options.isCancelled }
@@ -55421,6 +56009,14 @@ var ExportModal = class extends import_obsidian5.Modal {
     this.status = null;
     this.exporting = false;
     /**
+     * Per-export orientation, overriding the profile's own for this run only.
+     *
+     * `'profile'` — the default — means "whatever the profile says", which is not the same
+     * thing as picking the value the profile currently holds: switching profile then has to
+     * change the orientation too, and it does, because nothing was pinned.
+     */
+    this.orientation = "profile";
+    /**
      * The pagination currently in flight, plus whether another was asked for while it ran.
      *
      * Pagination is not re-entrant: every run destroys the previous paged.js polisher and
@@ -55452,6 +56048,16 @@ var ExportModal = class extends import_obsidian5.Modal {
         const next = this.settings.profiles.find((profile) => profile.id === value);
         if (next === void 0) return;
         this.profile = next;
+        void this.repaginate();
+      });
+    });
+    new import_obsidian5.Setting(controls).setName("Orientation").setDesc("For this export only. The profile is not modified.").addDropdown((dropdown) => {
+      dropdown.addOption("profile", "Profile default");
+      dropdown.addOption("portrait", "Portrait");
+      dropdown.addOption("landscape", "Landscape");
+      dropdown.setValue(this.orientation);
+      dropdown.onChange((value) => {
+        this.orientation = value === "portrait" || value === "landscape" ? value : "profile";
         void this.repaginate();
       });
     });
@@ -55500,17 +56106,31 @@ var ExportModal = class extends import_obsidian5.Modal {
       await this.repaginate();
     }
   }
+  /**
+   * The profile as this export will actually use it.
+   *
+   * A copy whenever the orientation is overridden — never a mutation of the settings
+   * object. The profile in settings is shared with every other export and with the settings
+   * tab, and a per-export choice that quietly rewrote it would outlive the modal.
+   */
+  effectiveProfile() {
+    if (this.orientation === "profile") return this.profile;
+    const copy = structuredCloneProfile(this.profile);
+    copy.page.orientation = this.orientation;
+    return copy;
+  }
   async paginateOnce() {
     const backend = this.backend;
     if (backend === null || this.exporting) return;
     this.setStatus("Rendering\u2026");
     try {
-      const prepared = await this.service.prepareDocument(this.file.path, this.file.basename, this.profile);
+      const profile = this.effectiveProfile();
+      const prepared = await this.service.prepareDocument(this.file.path, this.file.basename, profile);
       this.setStatus("Paginating\u2026");
       const result = await backend.paginate({
         html: wrapDocumentSections([prepared.note]),
-        css: composeCss(this.profile),
-        page: this.profile.page
+        css: composeCss(profile),
+        page: profile.page
       });
       const warnings = prepared.report.warnings.length + prepared.report.errors.length;
       if (warnings > 0) console.warn("[multi-exporter] preview report", prepared.report.toLines());
@@ -55544,7 +56164,7 @@ var ExportModal = class extends import_obsidian5.Modal {
         profiles: this.settings.profiles,
         folderProfiles: this.settings.folderProfiles,
         defaultProfileId: this.settings.defaultProfileId,
-        overrideProfile: this.profile
+        overrideProfile: this.effectiveProfile()
       });
       const note = plan.notes[0];
       if (note !== void 0) {
@@ -55976,6 +56596,23 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
         await this.save();
       });
     });
+    new import_obsidian8.Setting(editor).setName("Fit to page").setDesc(
+      "Shrink the whole document until its widest and tallest content fits inside the page box. Measured on the finished pages, so it only ever scales down."
+    ).addToggle(
+      (toggle) => toggle.setValue(profile.page.fitToPage).onChange(async (value) => {
+        profile.page.fitToPage = value;
+        await this.save();
+        this.display();
+      })
+    );
+    if (!profile.page.fitToPage) {
+      new import_obsidian8.Setting(editor).setName("Print scale").setDesc("Percentage the finished pages are printed at, where 100 is unscaled.").addSlider(
+        (slider) => slider.setLimits(40, 200, 5).setValue(clampPercent(profile.page.printScale)).setDynamicTooltip().onChange(async (value) => {
+          profile.page.printScale = value;
+          await this.save();
+        })
+      );
+    }
     const margins = new import_obsidian8.Setting(editor).setName("Margins").setDesc("Top, right, bottom, left \u2014 any CSS length. Inches by default; mm and pt work too.").setClass("mx-margins-setting");
     for (const edge of MARGIN_EDGES) {
       margins.addText((text) => {
@@ -55987,7 +56624,9 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
         text.inputEl.setAttribute("aria-label", `${EDGE_LABELS[edge]} margin`);
       });
     }
-    new import_obsidian8.Setting(editor).setName("Reset page to defaults").setDesc("Restores the shipped page size, orientation, margins and furniture. Leaves the stylesheet alone.").addButton(
+    new import_obsidian8.Setting(editor).setName("Reset page to defaults").setDesc(
+      "Restores the shipped page size, orientation, scale, margins and furniture. Leaves the stylesheet alone."
+    ).addButton(
       (button) => button.setButtonText("Reset page").onClick(async () => {
         const template = createDefaultProfiles().find((candidate) => candidate.id === profile.id);
         const source = template != null ? template : createDefaultProfiles()[0];
@@ -56147,6 +56786,10 @@ function describeDeleteFallout(settings, profile) {
     lines.push(`It is the default profile; \u201C${(_a = next == null ? void 0 : next.name) != null ? _a : "the first remaining profile"}\u201D becomes the default.`);
   }
   return lines;
+}
+function clampPercent(value) {
+  if (!Number.isFinite(value)) return 100;
+  return Math.min(200, Math.max(40, Math.round(value / 5) * 5));
 }
 
 // src/main.ts

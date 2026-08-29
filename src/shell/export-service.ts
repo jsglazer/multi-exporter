@@ -1,6 +1,6 @@
 import { Notice } from 'obsidian';
 import type { App } from 'obsidian';
-import { MD_ANNOTATION_CLASSES } from '../adapter/obsidian-internals';
+import { MD_ANNOTATION_STRIP_CLASSES } from '../adapter/obsidian-internals';
 import type { RenderedDocument } from '../core/backend';
 import type { ExportPlan } from '../core/export-plan';
 import { prepareDocument, runExport } from '../core/pipeline';
@@ -9,6 +9,7 @@ import { ExportReport } from '../core/report';
 import type { PluginSettings, Profile } from '../core/types';
 import { NodeFileWriter } from './fs-writer';
 import { ObsidianImageSource } from './image-source';
+import { describeAnnotationGateReason, resolveAnnotationGate } from './md-annotation';
 import { PagedJsWebviewBackend } from './pagedjs-backend';
 import { PdfLibOutlineInjector } from './pdf-outline';
 import { ObsidianDocumentRenderer } from './render';
@@ -90,12 +91,17 @@ export class ExportService {
 				report.once('warning', `citations-${gate.reason}`, describeGateReason(gate.reason));
 			}
 			const citeKeys = gate.provider.available ? await gate.provider.getAllCiteKeys() : new Set<string>();
+			const annotations = resolveAnnotationGate(this.app, profile.flags.annotationMode !== 'off');
+			if (annotations.reason !== 'ok') {
+				report.once('warning', `annotations-${annotations.reason}`, describeAnnotationGateReason(annotations.reason));
+			}
 			const deps: DocumentPrepDeps = {
 				renderer: new ObsidianDocumentRenderer(this.app, host),
 				citations: gate.provider,
+				annotations: annotations.provider,
 				images: new ObsidianImageSource(this.app),
 				transforms: this.transforms,
-				annotationClasses: MD_ANNOTATION_CLASSES,
+				annotationStripClasses: MD_ANNOTATION_STRIP_CLASSES,
 				imageFetchTimeoutMs: settings.imageFetchTimeoutMs,
 			};
 			const prepared = await prepareDocument(
@@ -131,16 +137,29 @@ export class ExportService {
 			report.once('warning', `citations-${gate.reason}`, describeGateReason(gate.reason));
 		}
 
+		// Same rule as the citation gate, one line below it: resolved once per export, at
+		// export time, and never in `onload`.
+		const wantsAnnotations = options.plan.notes.some((note) => note.profile.flags.annotationMode !== 'off');
+		const annotationGate = resolveAnnotationGate(this.app, wantsAnnotations);
+		if (annotationGate.reason !== 'ok') {
+			report.once(
+				'warning',
+				`annotations-${annotationGate.reason}`,
+				describeAnnotationGateReason(annotationGate.reason),
+			);
+		}
+
 		const deps: PipelineDeps = {
 			renderer: new ObsidianDocumentRenderer(this.app, host),
 			citations: gate.provider,
+			annotations: annotationGate.provider,
 			images: new ObsidianImageSource(this.app),
 			transforms: this.transforms,
 			backend,
 			writer: this.writer,
 			outline: this.outline,
 			compressor: this.compressor,
-			annotationClasses: MD_ANNOTATION_CLASSES,
+			annotationStripClasses: MD_ANNOTATION_STRIP_CLASSES,
 			imageFetchTimeoutMs: settings.imageFetchTimeoutMs,
 			...(options.onProgress === undefined ? {} : { onProgress: options.onProgress }),
 			...(options.isCancelled === undefined ? {} : { isCancelled: options.isCancelled }),

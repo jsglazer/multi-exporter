@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import type { AnnotationClassNames, Endnote } from '../src/core/annotations';
+import type {
+	AnnotationCategoryColors,
+	AnnotationPlan,
+	AnnotationRecord,
+	AnnotationStripClasses,
+	AnnotationStripPlan,
+} from '../src/core/annotations';
 import type { CitationLinkMatch } from '../src/core/citations';
 import type { ElementLike } from '../src/core/dom';
 import { planMergedExport, planSeparateExport } from '../src/core/export-plan';
 import type { FetchedImage, ImageSource, ImageSubstitution } from '../src/core/image-inline';
 import { runExport } from '../src/core/pipeline';
 import type {
+	AnnotationProvider,
 	CitationProvider,
 	DocumentRenderer,
 	DocumentTransforms,
@@ -30,15 +37,40 @@ import { el, internalLink, MockElement, root } from './fakes/mock-dom';
  * the network or a disk — the whole pipeline runs in-process and deterministically.
  */
 
-const CLASSES: AnnotationClassNames = {
-	host: 'gutter-host',
-	card: 'gutter-card',
-	text: 'gutter-text',
-	number: 'gutter-num',
-	hidden: 'gutter-hidden',
-	leader: 'gutter-leader',
-	tick: 'gutter-tick',
+const STRIP_CLASSES: AnnotationStripClasses = {
+	unwrap: ['mdann-hl'],
+	remove: ['mdann-marker'],
 };
+
+/** A stand-in for `md-annotation`'s API, holding whatever records a test wants back. */
+function annotationProvider(records: Record<string, AnnotationRecord[]> = {}): AnnotationProvider {
+	return {
+		available: true,
+		categoryColors: { Define: { background: '#ffee88' } },
+		getAnnotations: (sourcePath: string): Promise<AnnotationRecord[]> =>
+			Promise.resolve(records[sourcePath] ?? []),
+	};
+}
+
+function noAnnotations(): AnnotationProvider {
+	return {
+		available: false,
+		categoryColors: {},
+		getAnnotations: (): Promise<AnnotationRecord[]> => Promise.resolve([]),
+	};
+}
+
+function record(init: Partial<AnnotationRecord> & { selector: AnnotationRecord['selector'] }): AnnotationRecord {
+	return {
+		id: 'a1',
+		type: 'highlight',
+		category: '',
+		comment: '',
+		author: 'Josh',
+		status: 'open',
+		...init,
+	};
+}
 
 const profiles = createDefaultProfiles();
 const article = profiles.find((profile) => profile.id === 'article') as Profile;
@@ -72,7 +104,9 @@ class RecordingTransforms implements DocumentTransforms {
 	readonly citations: CitationLinkMatch[] = [];
 	readonly substitutions: ImageSubstitution[] = [];
 	readonly removed: ElementLike[] = [];
-	readonly endnotes: Endnote[] = [];
+	readonly stripped: AnnotationStripPlan[] = [];
+	readonly annotations: AnnotationPlan[] = [];
+	readonly colors: AnnotationCategoryColors[] = [];
 	readonly bibliographies: string[] = [];
 
 	applyImageSubstitutions(_note: RenderedNote, substitutions: readonly ImageSubstitution[]): void {
@@ -87,8 +121,13 @@ class RecordingTransforms implements DocumentTransforms {
 		this.removed.push(...elements);
 	}
 
-	appendEndnotes(_note: RenderedNote, endnotes: readonly Endnote[]): void {
-		this.endnotes.push(...endnotes);
+	stripPluginAnnotations(_note: RenderedNote, plan: AnnotationStripPlan): void {
+		this.stripped.push(plan);
+	}
+
+	applyAnnotations(_note: RenderedNote, plan: AnnotationPlan, colors: AnnotationCategoryColors): void {
+		this.annotations.push(plan);
+		this.colors.push(colors);
 	}
 
 	appendBibliography(_note: RenderedNote, html: string): void {
@@ -175,13 +214,14 @@ function harness(
 	const deps: PipelineDeps = {
 		renderer,
 		citations: citationProvider(),
+		annotations: noAnnotations(),
 		images: noImages,
 		transforms,
 		backend,
 		writer,
 		outline,
 		compressor,
-		annotationClasses: CLASSES,
+		annotationStripClasses: STRIP_CLASSES,
 		imageFetchTimeoutMs: 1000,
 		...overrides,
 	};
@@ -384,20 +424,29 @@ describe('citations through the pipeline', () => {
 });
 
 describe('annotations through the pipeline', () => {
-	const annotated = (): MockElement =>
+	const note = (): MockElement =>
 		root(
 			el({ tag: 'h1', text: 'Chapter' }),
-			el({ tag: 'p', text: 'Body.' }),
-			el({
-				classes: ['gutter-host'],
-				children: [
-					el({ classes: ['gutter-card'], children: [el({ classes: ['gutter-text'], text: 'A comment' })] }),
-				],
-			}),
+			el({ tag: 'p', text: 'A NAND gate needs four transistors, unlike a NOT gate.' }),
+			el({ tag: 'p', classes: ['mdann-marker'], text: '1' }),
 		);
 
-	it('appends endnotes when the profile says endnotes', async () => {
-		const h = harness({ 'A.md': annotated });
+	const records: AnnotationRecord[] = [
+		record({
+			id: 'later',
+			selector: { exact: 'NOT gate', prefix: 'transistors, unlike a ', suffix: '.' },
+			comment: 'Second in the text, first in the block.',
+			category: 'Define',
+		}),
+		record({
+			id: 'earlier',
+			selector: { exact: 'NAND gate', prefix: 'A ', suffix: ' needs four transistors' },
+			comment: 'First in the text.',
+			category: 'Define',
+		}),
+	];
+
+	const run = async (h: ReturnType<typeof harness>): Promise<void> => {
 		await runExport(
 			planSeparateExport({
 				paths: ['A.md'],
@@ -412,8 +461,65 @@ describe('annotations through the pipeline', () => {
 			h.deps,
 			h.report,
 		);
+	};
 
-		expect(h.transforms.endnotes.map((note) => note.text)).toEqual(['A comment']);
+	it('numbers the notes in document order, not record order', async () => {
+		const h = harness({ 'A.md': note }, { annotations: annotationProvider({ 'A.md': records }) });
+		await run(h);
+
+		const plan = h.transforms.annotations[0];
+		expect(plan?.mode).toBe('endnotes');
+		expect(plan?.notes.map((entry) => [entry.number, entry.quote])).toEqual([
+			[1, 'NAND gate'],
+			[2, 'NOT gate'],
+		]);
+	});
+
+	// The other plugin's own rendered markup goes before anything is located: its marker
+	// carries text, and leaving it in shifts every offset after it.
+	it("strips md-annotation's own rendered markup first", async () => {
+		const h = harness({ 'A.md': note }, { annotations: annotationProvider({ 'A.md': records }) });
+		await run(h);
+		expect(h.transforms.stripped[0]?.remove).toHaveLength(1);
+	});
+
+	it('hands the category colours through to the shell', async () => {
+		const h = harness({ 'A.md': note }, { annotations: annotationProvider({ 'A.md': records }) });
+		await run(h);
+		expect(h.transforms.colors[0]).toEqual({ Define: { background: '#ffee88' } });
+	});
+
+	// A highlight with nothing written on it is fully expressed by being highlighted.
+	it('prints no note for a highlight that carries no comment', async () => {
+		const bare = [record({ selector: { exact: 'NAND gate', prefix: 'A ', suffix: ' needs' } })];
+		const h = harness({ 'A.md': note }, { annotations: annotationProvider({ 'A.md': bare }) });
+		await run(h);
+
+		expect(h.transforms.annotations[0]?.placements).toHaveLength(1);
+		expect(h.transforms.annotations[0]?.notes).toEqual([]);
+	});
+
+	it('reports an annotation it cannot locate rather than dropping it', async () => {
+		const gone = [
+			record({
+				selector: { exact: 'a sentence deleted from the note entirely', prefix: 'x', suffix: 'y' },
+				comment: 'orphan',
+			}),
+		];
+		const h = harness({ 'A.md': note }, { annotations: annotationProvider({ 'A.md': gone }) });
+		await run(h);
+
+		expect(h.report.warnings.map((entry) => entry.code)).toContain('annotation-unmatched');
+	});
+
+	// A missing or disabled md-annotation turns annotations off for the export and nothing
+	// more: the export still runs and still writes its file.
+	it('exports normally when md-annotation is unavailable', async () => {
+		const h = harness({ 'A.md': note });
+		await run(h);
+
+		expect(h.transforms.annotations).toEqual([]);
+		expect(h.writer.files.size).toBe(1);
 	});
 });
 

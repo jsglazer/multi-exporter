@@ -1,5 +1,5 @@
 import type { App, Plugin } from 'obsidian';
-import type { AnnotationClassNames } from '../core/annotations';
+import type { AnnotationCategoryColor, AnnotationCategoryColors, AnnotationStripClasses } from '../core/annotations';
 
 /**
  * **The** adapter for everything undocumented this plugin touches.
@@ -17,7 +17,7 @@ import type { AnnotationClassNames } from '../core/annotations';
  * | Electron | 39.8.3 | `Electron Framework.framework` `CFBundleVersion` |
  * | Chromium | 142.0.7444.265 | embedded version string |
  * | `zotero-manager` | API `version: 1` (plugin v1.1.9) | `src/api.ts`, read 2026-08-17 |
- * | `md-annotation` | v1.0.13 | `styles.css` class names, read 2026-08-17 |
+ * | `md-annotation` | v1.0.22, public `api` | `src/api.ts`, read 2026-08-29 |
  *
  * The audit named no Obsidian internal beyond these; in particular it specified no file
  * explorer access, so none is taken.
@@ -72,24 +72,72 @@ export function getPluginStringSetting(app: App, pluginId: string, key: string):
 	return typeof value === 'string' ? value : null;
 }
 
-/* --------------------------------------------------------------- md-annotation CSS -- */
+/* ------------------------------------------------------------------- md-annotation -- */
 
 /**
- * `md-annotation`'s gutter classes, v1.0.13.
+ * `md-annotation`'s own rendered output, as it appears in a note this plugin rendered.
  *
- * A first-party coupling, but an undocumented-by-contract one: these are CSS class names,
- * not an API, so they belong behind this boundary with everything else that can move
- * without warning.
+ * Not a styling contract and not something to build on: this is the list of classes to
+ * **take back out**. `md-annotation` registers a markdown post-processor, so a detached
+ * `MarkdownRenderer.render()` does get highlight spans and comment markers from it — but
+ * every branch that draws them is gated on that plugin's live visibility settings
+ * (`annotationFormattingEnabled`, `commentsHiddenEnabled`, `gutterAnnotationsEnabled`).
+ * Keeping them would make the PDF change with a sidebar toggle. They are removed, and the
+ * annotations are drawn again from the API records, where the profile decides everything.
+ *
+ * Highlight and anchor spans wrap the *note's own words*, so they are unwrapped; markers and
+ * gutter furniture are `md-annotation`'s own elements and go whole.
+ *
+ * A CSS class name is an undocumented-by-contract coupling to another plugin, which is why
+ * this list lives behind this boundary with everything else that can move without warning.
  */
-export const MD_ANNOTATION_CLASSES: AnnotationClassNames = {
-	host: 'gutter-host',
-	card: 'gutter-card',
-	text: 'gutter-text',
-	number: 'gutter-num',
-	hidden: 'gutter-hidden',
-	leader: 'gutter-leader',
-	tick: 'gutter-tick',
+export const MD_ANNOTATION_STRIP_CLASSES: AnnotationStripClasses = {
+	unwrap: ['mdann-hl', 'mdann-anchor'],
+	remove: ['mdann-marker', 'mdann-gutter-host', 'mdann-gutter-card', 'mdann-gutter-leader', 'mdann-gutter-tick'],
 };
+
+/**
+ * Highlight colours for each `md-annotation` category, or `{}` when they cannot be read.
+ *
+ * The **light** palette, always: an export goes onto white paper, and a category's dark-mode
+ * colours are chosen to sit on a dark editor background. `use: false` means the category is
+ * defined but switched off, so it contributes no colour and falls back to the profile's own
+ * styling.
+ *
+ * Reading another plugin's settings object is the same class of coupling as its class names
+ * and lives here for the same reason. Every level is treated as possibly absent: this is
+ * user-editable JSON that survives across versions.
+ */
+export function getMdAnnotationCategoryColors(app: App, pluginId: string): AnnotationCategoryColors {
+	const settings = pluginRegistry(app)?.plugins[pluginId]?.settings;
+	const styles = settings?.['categoryStyles'];
+	if (styles === null || typeof styles !== 'object') return {};
+
+	const out: AnnotationCategoryColors = {};
+	for (const [name, value] of Object.entries(styles as Record<string, unknown>)) {
+		if (value === null || typeof value !== 'object') continue;
+		const style = value as { use?: unknown; light?: unknown };
+		if (style.use === false) continue;
+		const light = style.light;
+		if (light === null || typeof light !== 'object') continue;
+		const parts = light as { fr?: unknown; bg?: unknown };
+		const color: AnnotationCategoryColor = {};
+		const foreground = enabledColor(parts.fr);
+		const background = enabledColor(parts.bg);
+		if (foreground !== null) color.foreground = foreground;
+		if (background !== null) color.background = background;
+		if (color.foreground !== undefined || color.background !== undefined) out[name] = color;
+	}
+	return out;
+}
+
+/** `{ enabled, color }` -> the colour, but only when it is switched on and non-empty. */
+function enabledColor(option: unknown): string | null {
+	if (option === null || typeof option !== 'object') return null;
+	const candidate = option as { enabled?: unknown; color?: unknown };
+	if (candidate.enabled !== true) return null;
+	return typeof candidate.color === 'string' && candidate.color !== '' ? candidate.color : null;
+}
 
 /* -------------------------------------------------------------------- save dialogs -- */
 

@@ -1,10 +1,16 @@
-import { planAnnotations } from './annotations';
-import type { AnnotationClassNames, Endnote } from './annotations';
+import { planAnnotationStrip, planAnnotations } from './annotations';
+import type {
+	AnnotationCategoryColors,
+	AnnotationPlan,
+	AnnotationRecord,
+	AnnotationStripClasses,
+	AnnotationStripPlan,
+} from './annotations';
 import { ExportCancelled } from './backend';
 import type { ExportBackend, RenderedDocument } from './backend';
 import { scanCitations } from './citations';
 import type { CitationLinkMatch } from './citations';
-import type { ElementLike, RootLike } from './dom';
+import type { ElementLike, NodeLike, RootLike } from './dom';
 import type { ExportPlan, PlannedNote } from './export-plan';
 import { inlineImages } from './image-inline';
 import type { ImageSource, ImageSubstitution } from './image-inline';
@@ -29,8 +35,13 @@ import type { Profile } from './types';
 export interface RenderedNote {
 	sourcePath: string;
 	title: string;
-	/** Live DOM root for the rendered note; the transforms mutate this. */
-	root: RootLike;
+	/**
+	 * Live DOM root for the rendered note; the transforms mutate this.
+	 *
+	 * Both halves of the structural surface, because locating annotations has to *walk* the
+	 * tree — `querySelectorAll` alone cannot tell you what order two pieces of text are in.
+	 */
+	root: RootLike & NodeLike;
 }
 
 /** Renders a vault note into DOM using Obsidian's own renderer. Shell-side. */
@@ -56,12 +67,30 @@ export interface CitationProvider {
 	getBibliography(citeKeys: readonly string[], cslStyle: string): Promise<string | null>;
 }
 
+/**
+ * The `md-annotation` gate, already resolved by the shell.
+ *
+ * Exactly the same contract as `CitationProvider`: `available` false means annotations are
+ * off **for this export only** and the export still runs to completion. A missing, disabled
+ * or differently-shaped `md-annotation` must never throw and must never fail an export.
+ */
+export interface AnnotationProvider {
+	readonly available: boolean;
+	/** Highlight colours per category name, as configured in `md-annotation`. */
+	readonly categoryColors: AnnotationCategoryColors;
+	/** The note's annotation records, straight from the other plugin's API. */
+	getAnnotations(sourcePath: string): Promise<AnnotationRecord[]>;
+}
+
 /** DOM surgery. Implemented over the real DOM in the shell; recorded by a fake in tests. */
 export interface DocumentTransforms {
 	applyImageSubstitutions(note: RenderedNote, substitutions: readonly ImageSubstitution[]): void;
 	markCitations(note: RenderedNote, links: readonly CitationLinkMatch[]): void;
 	removeElements(note: RenderedNote, elements: readonly ElementLike[]): void;
-	appendEndnotes(note: RenderedNote, endnotes: readonly Endnote[]): void;
+	/** Take another plugin's rendered annotation markup back out, before anything is located. */
+	stripPluginAnnotations(note: RenderedNote, plan: AnnotationStripPlan): void;
+	/** Draw the annotations: highlights, markers, and either gutter cards or an endnote list. */
+	applyAnnotations(note: RenderedNote, plan: AnnotationPlan, colors: AnnotationCategoryColors): void;
 	appendBibliography(note: RenderedNote, html: string): void;
 	/** Final HTML handed to the backend. */
 	serialize(note: RenderedNote): string;
@@ -81,13 +110,14 @@ export interface PdfCompressor {
 export interface PipelineDeps {
 	renderer: DocumentRenderer;
 	citations: CitationProvider;
+	annotations: AnnotationProvider;
 	images: ImageSource;
 	transforms: DocumentTransforms;
 	backend: ExportBackend;
 	writer: FileWriter;
 	outline: OutlineInjector;
 	compressor: PdfCompressor;
-	annotationClasses: AnnotationClassNames;
+	annotationStripClasses: AnnotationStripClasses;
 	imageFetchTimeoutMs: number;
 	onProgress?: (fraction: number, label: string) => void;
 	isCancelled?: () => boolean;
@@ -267,7 +297,7 @@ function headingsForDocument(
  */
 export type DocumentPrepDeps = Pick<
 	PipelineDeps,
-	'renderer' | 'citations' | 'images' | 'transforms' | 'annotationClasses' | 'imageFetchTimeoutMs'
+	'renderer' | 'citations' | 'annotations' | 'images' | 'transforms' | 'annotationStripClasses' | 'imageFetchTimeoutMs'
 >;
 
 /**
@@ -313,14 +343,61 @@ export async function prepareDocument(
 			deps.transforms.applyImageSubstitutions(rendered, result.substitutions);
 		}
 
-		const annotations = planAnnotations(rendered.root, flags.annotationMode, deps.annotationClasses);
-		if (annotations.removals.length > 0) deps.transforms.removeElements(rendered, annotations.removals);
-		if (annotations.endnotes.length > 0) deps.transforms.appendEndnotes(rendered, annotations.endnotes);
+		await applyAnnotations(rendered, note, deps, report);
 
 		return { sourcePath: note.sourcePath, title: note.title, html: deps.transforms.serialize(rendered) };
 	} finally {
 		deps.renderer.release(rendered);
 	}
+}
+
+/**
+ * Annotations, last of the three transforms.
+ *
+ * Two passes over the tree, and the order between them is not negotiable. `md-annotation`'s
+ * own post-processor output is stripped **first**: its markers are elements that carry text
+ * of their own, and leaving one in the middle of a sentence would shift every character
+ * offset after it, so every annotation past the first would be located slightly wrong.
+ *
+ * The strip runs whenever the profile wants annotations at all, including in `off` mode —
+ * `off` means *no annotations in the PDF*, and the other plugin's leftovers are annotations.
+ */
+async function applyAnnotations(
+	rendered: RenderedNote,
+	note: PlannedNote,
+	deps: DocumentPrepDeps,
+	report: ExportReport,
+): Promise<void> {
+	const mode = note.profile.flags.annotationMode;
+	const strip = planAnnotationStrip(rendered.root, deps.annotationStripClasses);
+	if (strip.unwrap.length > 0 || strip.remove.length > 0) deps.transforms.stripPluginAnnotations(rendered, strip);
+	if (mode === 'off' || !deps.annotations.available) return;
+
+	const records = await deps.annotations.getAnnotations(note.sourcePath);
+	// A profile with annotations enabled on a note that has none is an ordinary thing to do.
+	if (records.length === 0) return;
+
+	const plan = planAnnotations(rendered.root, mode, records, [ANNOTATION_SKIP_CLASSES.bibliography]);
+	deps.transforms.applyAnnotations(rendered, plan, deps.annotations.categoryColors);
+
+	// An annotation that could not be placed is reported, never dropped silently: the note
+	// was edited out from under the selector, and the only honest thing to do is say which.
+	for (const orphan of plan.unmatched) {
+		report.warn(
+			'annotation-unmatched',
+			`An annotation could not be located in the rendered note, so it was left out: "${excerpt(orphan)}"`,
+			note.sourcePath,
+		);
+	}
+}
+
+/** Subtrees the export appended itself, which are not the note and must not attract a match. */
+const ANNOTATION_SKIP_CLASSES = { bibliography: 'mx-bibliography' };
+
+/** A short, single-line identification of an annotation, for a warning line. */
+function excerpt(record: AnnotationRecord): string {
+	const text = (record.selector.exact === '' ? record.comment : record.selector.exact).replace(/\s+/g, ' ').trim();
+	return text.length > 60 ? `${text.slice(0, 57)}…` : text;
 }
 
 /**

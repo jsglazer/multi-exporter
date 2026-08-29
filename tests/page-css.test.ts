@@ -28,6 +28,8 @@ function config(overrides: Partial<PageConfig> = {}): PageConfig {
 		suppressFirstPageFurniture: false,
 		keepHeadingsWithText: false,
 		pageNumbering: 'continuous',
+		fitToPage: false,
+		printScale: 100,
 		orphans: 2,
 		widows: 2,
 		...overrides,

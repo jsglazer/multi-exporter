@@ -34,6 +34,8 @@ function defaultPage(): PageConfig {
 		suppressFirstPageFurniture: false,
 		keepHeadingsWithText: true,
 		pageNumbering: 'per-note',
+		fitToPage: false,
+		printScale: 100,
 		orphans: 2,
 		widows: 2,
 	};

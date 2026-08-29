@@ -69,6 +69,23 @@ export interface PageConfig {
 	 * paginated pages instead — see `core/page-numbering.ts`.
 	 */
 	pageNumbering: PageNumbering;
+	/**
+	 * Shrink the printed page until its content fits inside the page box.
+	 *
+	 * The escape hatch for content that is simply too big for the paper — a wide table, a
+	 * full-resolution screenshot, a Mermaid diagram with twenty nodes. `BASE_DOCUMENT_CSS`
+	 * caps such things at 100% of the text column, but a `min-width` a plugin set itself
+	 * beats a `max-width`, and paged.js then moves the whole unbreakable element to the next
+	 * page rather than shrinking it — which reads as "the export lost half the note".
+	 *
+	 * On, the export measures the worst overflow on the finished pages and prints at exactly
+	 * the scale that brings it inside the box; off, `printScale` is used verbatim. Either way
+	 * it is Chromium's own print scale, applied to the whole document, so text and figures
+	 * keep their relative sizes.
+	 */
+	fitToPage: boolean;
+	/** Print scale as a percentage, used when `fitToPage` is off. 100 is unscaled. */
+	printScale: number;
 	orphans: number;
 	widows: number;
 }

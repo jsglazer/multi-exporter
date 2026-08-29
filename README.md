@@ -62,7 +62,9 @@ One paginated DOM feeds both the preview and the PDF writer. That property is st
 - **Citations and bibliography** via [`zotero-manager`](https://github.com/jsglazer/zotero-manager)'s public API. This plugin implements no citation formatting of its own.
 - **Image inlining** — remote and vault images become data URIs before pagination, so an export is reproducible and works offline.
 - **PDF Squeezer** — runs the `pdfs` CLI on the finished file when it is installed. Absence is not an error.
-- **`md-annotation` gutters** — comments print in the page margin or as endnotes, decided by the profile.
+- **`md-annotation` annotations** — read from that plugin's public API, not from the rendered page, so the export never depends on what its sidebar happened to be showing. Highlights are drawn in the category's own colour; a comment prints either as a numbered endnote or as a card in the page margin, decided by the profile and nothing else. Each annotation is located in the rendered note by its stored quote and context, and one that can no longer be found is **reported in the export report**, not silently dropped.
+- **Per-export orientation.** The single-note modal can print portrait or landscape for one run without touching the profile.
+- **Fit to page.** Optional: measure the finished pages and print at exactly the scale that brings the widest or tallest content inside the page box, instead of letting the paginator push an oversized table or screenshot whole onto a page of its own. Off, a fixed print-scale percentage is used instead.
 
 ## Installation
 
@@ -123,7 +125,9 @@ Both are handed to paged.js's polisher, which is what makes `@page` real: page g
 | `.mx-endnotes` | The endnotes block, when the profile puts annotations there |
 | `.mx-citation` | A resolved citation link; carries `data-mx-citekey` |
 | `.mx-image-failed` | An image that could not be fetched, left in place as a marker |
-| `.gutter-host`, `.gutter-card` | `md-annotation`'s own gutter classes, kept when annotations print in the margin |
+| `.mx-annotation` | A highlight; carries `data-mx-category` and, when it has a note, `data-mx-note` |
+| `.mx-annotation-marker` | The superscript number in the text pointing at an endnote or gutter card |
+| `.mx-annotation-card` | A gutter card, floated into the page margin by `--mx-gutter-width` |
 | `.pagedjs_page`, `.pagedjs_page_content` | paged.js's own per-page wrappers |
 
 **Recipes.**
@@ -219,7 +223,7 @@ The second one was doubly disguised. Electron re-raises *any* exception thrown i
 | Electron | 39.8.3 |
 | Chromium | 142.0.7444.265 |
 | `zotero-manager` | API `version: 1` (plugin v1.1.9) |
-| `md-annotation` | v1.0.13 |
+| `md-annotation` | v1.0.22, public `api` |
 
 ## Not in v1
 

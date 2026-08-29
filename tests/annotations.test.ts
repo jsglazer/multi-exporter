@@ -1,125 +1,240 @@
 import { describe, expect, it } from 'vitest';
-import { planAnnotations } from '../src/core/annotations';
-import type { AnnotationClassNames } from '../src/core/annotations';
+import { flattenText, locate, similarity } from '../src/core/annotation-match';
+import { planAnnotationStrip, planAnnotations } from '../src/core/annotations';
+import type { AnnotationRecord, AnnotationStripClasses } from '../src/core/annotations';
 import { el, root } from './fakes/mock-dom';
 
 /**
  * `md-annotation` compatibility.
  *
+ * The input is **data** now, not a DOM: the plugin's API returns annotation records, and the
+ * plugin has to find them in the rendered note itself. So these tests are mostly about the
+ * matcher, and the tree is only there to be searched.
+ *
  * The class names are injected rather than imported, mirroring the production wiring where
- * they come from the adapter module — so this test also demonstrates that core knows nothing
+ * they come from the adapter module — so this also demonstrates that core knows nothing
  * about another plugin's CSS.
  */
-const CLASSES: AnnotationClassNames = {
-	host: 'gutter-host',
-	card: 'gutter-card',
-	text: 'gutter-text',
-	number: 'gutter-num',
-	hidden: 'gutter-hidden',
-	leader: 'gutter-leader',
-	tick: 'gutter-tick',
+const STRIP: AnnotationStripClasses = {
+	unwrap: ['mdann-hl', 'mdann-anchor'],
+	remove: ['mdann-marker', 'mdann-gutter-host'],
 };
 
-function annotated(): ReturnType<typeof root> {
-	return root(
-		el({ tag: 'p', text: 'Body text.', children: [el({ classes: ['gutter-tick'] })] }),
-		el({ classes: ['gutter-leader'] }),
-		el({
-			classes: ['gutter-host'],
-			children: [
-				el({
-					classes: ['gutter-card'],
-					children: [el({ classes: ['gutter-num'], text: '1' }), el({ classes: ['gutter-text'], text: 'First note' })],
-				}),
-				el({
-					classes: ['gutter-card'],
-					children: [el({ classes: ['gutter-num'], text: '2' }), el({ classes: ['gutter-text'], text: 'Second note' })],
-				}),
-			],
-		}),
-	);
+const SENTENCE = 'A NAND gate needs four transistors, while a NOT gate needs two.';
+
+function note(): ReturnType<typeof root> {
+	return root(el({ tag: 'h1', text: 'Gates' }), el({ tag: 'p', text: SENTENCE }));
 }
 
+function record(init: Partial<AnnotationRecord> & { selector: AnnotationRecord['selector'] }): AnnotationRecord {
+	return {
+		id: 'a1',
+		type: 'highlight',
+		category: 'Define',
+		comment: '',
+		author: 'Josh',
+		status: 'open',
+		...init,
+	};
+}
+
+describe('planAnnotationStrip', () => {
+	it('separates what is unwrapped from what is removed', () => {
+		const tree = root(
+			el({ tag: 'p', children: [el({ tag: 'span', classes: ['mdann-hl'], text: 'kept text' })] }),
+			el({ tag: 'span', classes: ['mdann-marker'], text: '1' }),
+		);
+		const plan = planAnnotationStrip(tree, STRIP);
+		expect(plan.unwrap).toHaveLength(1);
+		expect(plan.remove).toHaveLength(1);
+	});
+
+	// An element listed for removal is going away whole; unwrapping it as well would put its
+	// contents back into the note.
+	it('never both unwraps and removes the same element', () => {
+		const tree = root(el({ tag: 'span', classes: ['mdann-hl', 'mdann-marker'], text: '1' }));
+		const plan = planAnnotationStrip(tree, STRIP);
+		expect(plan.unwrap).toEqual([]);
+		expect(plan.remove).toHaveLength(1);
+	});
+
+	it('finds nothing in a note the other plugin never touched', () => {
+		const plan = planAnnotationStrip(note(), STRIP);
+		expect(plan.unwrap).toEqual([]);
+		expect(plan.remove).toEqual([]);
+	});
+});
+
+describe('flattenText', () => {
+	it('concatenates the note text and maps each run back to its node', () => {
+		const flat = flattenText(note());
+		expect(flat.text).toBe(`Gates${SENTENCE}`);
+		expect(flat.runs).toHaveLength(2);
+		expect(flat.runs[1]?.start).toBe(5);
+	});
+
+	// A code block is not prose: a quote must never be "found" inside one.
+	it('skips code, script and style subtrees', () => {
+		const flat = flattenText(root(el({ tag: 'p', text: 'ok' }), el({ tag: 'code', text: 'NAND' })));
+		expect(flat.text).toBe('ok');
+	});
+
+	it('skips the subtrees the export appended itself', () => {
+		const tree = root(el({ tag: 'p', text: 'ok' }), el({ classes: ['mx-bibliography'], text: 'Smith 1999' }));
+		expect(flattenText(tree, ['mx-bibliography']).text).toBe('ok');
+	});
+});
+
+describe('locate', () => {
+	const flat = SENTENCE;
+
+	it('finds a quote that occurs once', () => {
+		const found = locate(flat, { exact: 'NAND gate', prefix: 'A ', suffix: ' needs' });
+		expect(found).toEqual({ start: 2, end: 11, confidence: 1 });
+	});
+
+	it('uses the stored context to choose between repeats', () => {
+		const repeated = 'the gate is here. and the gate is there.';
+		const found = locate(repeated, { exact: 'the gate', prefix: 'here. and ', suffix: ' is there' });
+		expect(found?.start).toBe(22);
+	});
+
+	// Two candidates too close to call are orphaned, never guessed at: putting a comment on
+	// the wrong one of two identical sentences is worse than saying it could not be placed.
+	it('gives up on a quote whose context cannot separate it', () => {
+		expect(locate('ab ab', { exact: 'ab', prefix: '', suffix: '' })).toBeNull();
+	});
+
+	// The selector was captured from the markdown source; the search runs over the rendered
+	// text, where a source line break has become a single space.
+	it('matches across re-wrapped whitespace', () => {
+		const rendered = 'a NAND gate needs four transistors';
+		const found = locate(rendered, { exact: 'NAND\n  gate', prefix: 'a ', suffix: ' needs' });
+		expect(found?.start).toBe(2);
+		expect(rendered.slice(found?.start, found?.end)).toBe('NAND gate');
+	});
+
+	// The words the reader highlighted were edited afterwards, but the sentence around them
+	// was not — so the context is the surviving landmark.
+	it('falls back to the stored context when the quote itself changed', () => {
+		const rendered = 'A NAND gate needs exactly four transistors, while a NOT gate needs two.';
+		const found = locate(rendered, {
+			exact: 'needs four transistors',
+			prefix: 'A NAND gate ',
+			suffix: ', while a NOT gate',
+		});
+		expect(found).not.toBeNull();
+		expect(found?.confidence).toBeLessThan(1);
+	});
+
+	it('resolves a point comment to a caret between its two context windows', () => {
+		const found = locate(flat, { exact: '', prefix: 'A NAND gate', suffix: ' needs four' });
+		expect(found).toEqual({ start: 11, end: 11, confidence: 1 });
+	});
+
+	// A selector captured inside a table stores the raw pipe-delimited row as its context,
+	// and none of that survives rendering — so the words are what the two texts agree on.
+	it('sees through a table row stored as context', () => {
+		const rendered = 'One Three bob Highlight here please Four ann Highlight there please';
+		const found = locate(rendered, {
+			exact: 'here',
+			prefix: '# One\n| Three | bob | Highlight ',
+			suffix: ' please |\n|       |     |       ',
+		});
+		expect(found?.start).toBe(24);
+	});
+
+	it('reports nothing for a quote that is simply gone', () => {
+		expect(locate(flat, { exact: 'a paragraph that was deleted', prefix: 'x', suffix: 'y' })).toBeNull();
+	});
+});
+
+describe('similarity', () => {
+	it('is 1 for identical strings and 0 for unrelated ones', () => {
+		expect(similarity('transistor', 'transistor')).toBe(1);
+		expect(similarity('abcd', 'wxyz')).toBe(0);
+	});
+
+	it('degrades gradually rather than falling off a cliff', () => {
+		expect(similarity('four transistors', 'exactly four transistors')).toBeGreaterThan(0.7);
+	});
+});
+
 describe('planAnnotations', () => {
-	it('keeps the gutters in gutter mode', () => {
-		const plan = planAnnotations(annotated(), 'gutter', CLASSES);
-		expect(plan.keepGutters).toBe(true);
-		expect(plan.removeGutters).toBe(false);
-		expect(plan.endnotes).toEqual([]);
+	const highlight = record({
+		id: 'nand',
+		selector: { exact: 'NAND gate', prefix: 'A ', suffix: ' needs four' },
+		comment: 'The universal gate.',
+	});
+	const later = record({
+		id: 'not',
+		selector: { exact: 'NOT gate', prefix: 'while a ', suffix: ' needs two' },
+		comment: 'Two transistors.',
 	});
 
-	// Leader lines are a live-editor affordance with no meaning on paper.
-	it('always removes leader lines', () => {
-		expect(planAnnotations(annotated(), 'gutter', CLASSES).removals).toHaveLength(1);
+	it('does nothing at all in off mode', () => {
+		const plan = planAnnotations(note(), 'off', [highlight]);
+		expect(plan.placements).toEqual([]);
+		expect(plan.notes).toEqual([]);
 	});
 
-	it('collects endnotes in document order in endnotes mode', () => {
-		const plan = planAnnotations(annotated(), 'endnotes', CLASSES);
-		expect(plan.endnotes.map((note) => [note.number, note.text])).toEqual([
-			[1, 'First note'],
-			[2, 'Second note'],
+	// A profile with annotations enabled applied to a note that has none is ordinary.
+	it('is a silent no-op on a note with no records', () => {
+		const plan = planAnnotations(note(), 'endnotes', []);
+		expect(plan.notes).toEqual([]);
+		expect(plan.unmatched).toEqual([]);
+	});
+
+	it('numbers the notes by position in the text, not by record order', () => {
+		const plan = planAnnotations(note(), 'endnotes', [later, highlight]);
+		expect(plan.notes.map((entry) => [entry.number, entry.quote])).toEqual([
+			[1, 'NAND gate'],
+			[2, 'NOT gate'],
 		]);
-		expect(plan.removeGutters).toBe(true);
-		expect(plan.keepGutters).toBe(false);
 	});
 
-	// Prefers the card's dedicated text element so the number marker is not duplicated into
-	// the endnote body.
-	it('takes the card body text rather than the whole card', () => {
-		const plan = planAnnotations(annotated(), 'endnotes', CLASSES);
-		expect(plan.endnotes[0]?.text).toBe('First note');
+	it('carries the category and author onto the printed note', () => {
+		const plan = planAnnotations(note(), 'endnotes', [highlight]);
+		expect(plan.notes[0]).toEqual({
+			number: 1,
+			quote: 'NAND gate',
+			comment: 'The universal gate.',
+			category: 'Define',
+			author: 'Josh',
+		});
 	});
 
-	it('falls back to the whole card when it has no dedicated text element', () => {
-		const document = root(
-			el({ classes: ['gutter-host'], children: [el({ classes: ['gutter-card'], text: 'Bare note' })] }),
-		);
-		expect(planAnnotations(document, 'endnotes', CLASSES).endnotes[0]?.text).toBe('Bare note');
+	it('places a highlight over the text node that holds it', () => {
+		const plan = planAnnotations(note(), 'endnotes', [highlight]);
+		const placement = plan.placements[0];
+		expect(placement?.wraps).toHaveLength(1);
+		expect(placement?.wraps[0]?.from).toBe(2);
+		expect(placement?.wraps[0]?.to).toBe(11);
 	});
 
-	it('removes everything in off mode', () => {
-		const plan = planAnnotations(annotated(), 'off', CLASSES);
-		expect(plan.removeGutters).toBe(true);
-		expect(plan.endnotes).toEqual([]);
-		// host + leader + tick
-		expect(plan.removals).toHaveLength(3);
+	// A bare highlight is fully expressed by being highlighted; a number pointing at nothing
+	// is worse than no number.
+	it('gives a highlight with no comment no number and no note', () => {
+		const bare = record({ selector: { exact: 'NAND gate', prefix: 'A ', suffix: ' needs four' } });
+		const plan = planAnnotations(note(), 'endnotes', [bare]);
+		expect(plan.placements[0]?.number).toBe(0);
+		expect(plan.notes).toEqual([]);
 	});
 
-	// Decision: gutter mode with no gutter host present is a silent no-op, not an error. A
-	// profile with gutters on, applied to a note with no annotations, is ordinary.
-	it('is a silent no-op when gutter mode meets a document with no gutters', () => {
-		const plan = planAnnotations(root(el({ tag: 'p', text: 'Plain note.' })), 'gutter', CLASSES);
-		expect(plan.noGutterHost).toBe(true);
-		expect(plan.keepGutters).toBe(false);
-		expect(plan.removals).toEqual([]);
-		expect(plan.endnotes).toEqual([]);
+	it('reports what it could not place rather than dropping it', () => {
+		const gone = record({
+			id: 'gone',
+			selector: { exact: 'an entire paragraph that no longer exists', prefix: 'x', suffix: 'y' },
+			comment: 'orphan',
+		});
+		const plan = planAnnotations(note(), 'endnotes', [gone]);
+		expect(plan.placements).toEqual([]);
+		expect(plan.unmatched.map((entry) => entry.id)).toEqual(['gone']);
 	});
 
-	it('produces no endnotes for a document with no cards', () => {
-		const plan = planAnnotations(root(el({ tag: 'p', text: 'Plain note.' })), 'endnotes', CLASSES);
-		expect(plan.endnotes).toEqual([]);
-	});
-
-	it('drops cards whose text is empty rather than emitting a blank endnote', () => {
-		const document = root(
-			el({
-				classes: ['gutter-host'],
-				children: [
-					el({ classes: ['gutter-card'], children: [el({ classes: ['gutter-text'], text: '   ' })] }),
-					el({ classes: ['gutter-card'], children: [el({ classes: ['gutter-text'], text: 'Real' })] }),
-				],
-			}),
-		);
-		const plan = planAnnotations(document, 'endnotes', CLASSES);
-		expect(plan.endnotes).toEqual([{ number: 1, text: 'Real', source: expect.anything() }]);
-	});
-
-	// The rendered DOM supplies content, never the mode: the same tree yields three
-	// different plans purely from the profile flag.
-	it('is driven entirely by the flag, not by the DOM', () => {
-		const document = annotated();
-		expect(planAnnotations(document, 'gutter', CLASSES).keepGutters).toBe(true);
-		expect(planAnnotations(document, 'endnotes', CLASSES).endnotes).toHaveLength(2);
-		expect(planAnnotations(document, 'off', CLASSES).endnotes).toHaveLength(0);
+	// The mode is carried through untouched: it is the profile's decision, and this function
+	// is not allowed to have an opinion about it.
+	it('carries the mode through to the plan', () => {
+		expect(planAnnotations(note(), 'gutter', [highlight]).mode).toBe('gutter');
 	});
 });
