@@ -33,6 +33,14 @@ export class ExportModal extends Modal {
 	 */
 	private orientation: 'profile' | 'portrait' | 'landscape' = 'profile';
 	/**
+	 * Per-export fit-to-page, on the same terms as `orientation` above.
+	 *
+	 * `'profile'` defers; `'off'` is not the same thing, because a profile that ships fit-to-page
+	 * on has to be overridable in the direction that turns it *off* for one run — a two-state
+	 * toggle could only ever express "on".
+	 */
+	private fit: 'profile' | 'on' | 'off' = 'profile';
+	/**
 	 * The pagination currently in flight, plus whether another was asked for while it ran.
 	 *
 	 * Pagination is not re-entrant: every run destroys the previous paged.js polisher and
@@ -93,6 +101,22 @@ export class ExportModal extends Modal {
 				dropdown.onChange((value) => {
 					this.orientation = value === 'portrait' || value === 'landscape' ? value : 'profile';
 					void this.repaginate();
+				});
+			});
+
+		new Setting(controls)
+			.setName('Fit to page')
+			.setDesc('For this export only. Shrinks the finished pages until the widest content fits.')
+			.addDropdown((dropdown) => {
+				dropdown.addOption('profile', 'Profile default');
+				dropdown.addOption('on', 'On');
+				dropdown.addOption('off', 'Off');
+				dropdown.setValue(this.fit);
+				dropdown.onChange((value) => {
+					this.fit = value === 'on' || value === 'off' ? value : 'profile';
+					// No re-pagination: the scale is applied by `printToPDF`, after the pages are
+					// laid out, so nothing on screen changes and re-paginating would only cost
+					// a render for no visible difference.
 				});
 			});
 
@@ -168,9 +192,10 @@ export class ExportModal extends Modal {
 	 * tab, and a per-export choice that quietly rewrote it would outlive the modal.
 	 */
 	private effectiveProfile(): Profile {
-		if (this.orientation === 'profile') return this.profile;
+		if (this.orientation === 'profile' && this.fit === 'profile') return this.profile;
 		const copy = structuredCloneProfile(this.profile);
-		copy.page.orientation = this.orientation;
+		if (this.orientation !== 'profile') copy.page.orientation = this.orientation;
+		if (this.fit !== 'profile') copy.page.fitToPage = this.fit === 'on';
 		return copy;
 	}
 

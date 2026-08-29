@@ -56017,6 +56017,14 @@ var ExportModal = class extends import_obsidian5.Modal {
      */
     this.orientation = "profile";
     /**
+     * Per-export fit-to-page, on the same terms as `orientation` above.
+     *
+     * `'profile'` defers; `'off'` is not the same thing, because a profile that ships fit-to-page
+     * on has to be overridable in the direction that turns it *off* for one run — a two-state
+     * toggle could only ever express "on".
+     */
+    this.fit = "profile";
+    /**
      * The pagination currently in flight, plus whether another was asked for while it ran.
      *
      * Pagination is not re-entrant: every run destroys the previous paged.js polisher and
@@ -56059,6 +56067,15 @@ var ExportModal = class extends import_obsidian5.Modal {
       dropdown.onChange((value) => {
         this.orientation = value === "portrait" || value === "landscape" ? value : "profile";
         void this.repaginate();
+      });
+    });
+    new import_obsidian5.Setting(controls).setName("Fit to page").setDesc("For this export only. Shrinks the finished pages until the widest content fits.").addDropdown((dropdown) => {
+      dropdown.addOption("profile", "Profile default");
+      dropdown.addOption("on", "On");
+      dropdown.addOption("off", "Off");
+      dropdown.setValue(this.fit);
+      dropdown.onChange((value) => {
+        this.fit = value === "on" || value === "off" ? value : "profile";
       });
     });
     new import_obsidian5.Setting(controls).setName("File name").setDesc("Name for the PDF. Leave it as the note name, or type another. `.pdf` is added for you.").addText(
@@ -56114,9 +56131,10 @@ var ExportModal = class extends import_obsidian5.Modal {
    * tab, and a per-export choice that quietly rewrote it would outlive the modal.
    */
   effectiveProfile() {
-    if (this.orientation === "profile") return this.profile;
+    if (this.orientation === "profile" && this.fit === "profile") return this.profile;
     const copy = structuredCloneProfile(this.profile);
-    copy.page.orientation = this.orientation;
+    if (this.orientation !== "profile") copy.page.orientation = this.orientation;
+    if (this.fit !== "profile") copy.page.fitToPage = this.fit === "on";
     return copy;
   }
   async paginateOnce() {
