@@ -56025,6 +56025,16 @@ var ExportModal = class extends import_obsidian5.Modal {
      */
     this.fit = "profile";
     /**
+     * Per-export zoom, as a percentage. `null` means "whatever the profile says".
+     *
+     * The same number `printScale` has always been — Chromium's print scale, applied to the
+     * finished pages — reached from the modal rather than only from the profile, because
+     * "this one note wants to be smaller" is a per-export thought, not a per-profile one.
+     */
+    this.zoom = null;
+    /** Held so the fit and profile dropdowns can grey it out and re-seat it. */
+    this.zoomSlider = null;
+    /**
      * The pagination currently in flight, plus whether another was asked for while it ran.
      *
      * Pagination is not re-entrant: every run destroys the previous paged.js polisher and
@@ -56053,9 +56063,12 @@ var ExportModal = class extends import_obsidian5.Modal {
       for (const profile of this.settings.profiles) dropdown.addOption(profile.id, profile.name);
       dropdown.setValue(this.profile.id);
       dropdown.onChange((value) => {
+        var _a;
         const next = this.settings.profiles.find((profile) => profile.id === value);
         if (next === void 0) return;
         this.profile = next;
+        if (this.zoom === null) (_a = this.zoomSlider) == null ? void 0 : _a.setValue(clampZoom(next.page.printScale));
+        this.syncZoomEnabled();
         void this.repaginate();
       });
     });
@@ -56076,8 +56089,16 @@ var ExportModal = class extends import_obsidian5.Modal {
       dropdown.setValue(this.fit);
       dropdown.onChange((value) => {
         this.fit = value === "on" || value === "off" ? value : "profile";
+        this.syncZoomEnabled();
       });
     });
+    new import_obsidian5.Setting(controls).setName("Zoom").setDesc("Scales the whole PDF, where 100 is unscaled. Fit to page overrides it when on.").addSlider((slider) => {
+      this.zoomSlider = slider;
+      slider.setLimits(ZOOM_MIN, ZOOM_MAX, ZOOM_STEP).setValue(clampZoom(this.profile.page.printScale)).setDynamicTooltip().onChange((value) => {
+        this.zoom = value;
+      });
+    });
+    this.syncZoomEnabled();
     new import_obsidian5.Setting(controls).setName("File name").setDesc("Name for the PDF. Leave it as the note name, or type another. `.pdf` is added for you.").addText(
       (text) => text.setPlaceholder(this.file.basename).setValue(this.fileName).onChange((value) => {
         this.fileName = value;
@@ -56131,11 +56152,27 @@ var ExportModal = class extends import_obsidian5.Modal {
    * tab, and a per-export choice that quietly rewrote it would outlive the modal.
    */
   effectiveProfile() {
-    if (this.orientation === "profile" && this.fit === "profile") return this.profile;
+    if (this.orientation === "profile" && this.fit === "profile" && this.zoom === null) return this.profile;
     const copy = structuredCloneProfile(this.profile);
     if (this.orientation !== "profile") copy.page.orientation = this.orientation;
     if (this.fit !== "profile") copy.page.fitToPage = this.fit === "on";
+    if (this.zoom !== null) copy.page.printScale = this.zoom;
     return copy;
+  }
+  /** Whether fit-to-page will run for this export, profile default included. */
+  fitsToPage() {
+    return this.fit === "profile" ? this.profile.page.fitToPage === true : this.fit === "on";
+  }
+  /**
+   * Grey the zoom slider out while fit-to-page will decide the scale instead.
+   *
+   * A control that silently does nothing is worse than one that is visibly unavailable: the
+   * fit measurement *replaces* the print scale, it does not compose with it, and a zoom that
+   * looked live but changed nothing about the PDF would read as a bug.
+   */
+  syncZoomEnabled() {
+    var _a;
+    (_a = this.zoomSlider) == null ? void 0 : _a.setDisabled(this.fitsToPage());
   }
   async paginateOnce() {
     const backend = this.backend;
@@ -56226,6 +56263,13 @@ var ExportModal = class extends import_obsidian5.Modal {
 };
 function describeError(error2) {
   return error2 instanceof Error ? error2.message : String(error2);
+}
+var ZOOM_MIN = 40;
+var ZOOM_MAX = 200;
+var ZOOM_STEP = 5;
+function clampZoom(value) {
+  if (!Number.isFinite(value)) return 100;
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value / ZOOM_STEP) * ZOOM_STEP));
 }
 
 // src/shell/folder-export-modal.ts

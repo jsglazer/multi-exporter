@@ -1,5 +1,5 @@
 import { Modal, Notice, Setting } from 'obsidian';
-import type { App, TFile } from 'obsidian';
+import type { App, SliderComponent, TFile } from 'obsidian';
 import { showDirectoryDialog } from '../adapter/obsidian-internals';
 import { planSeparateExport, singleNoteDestination } from '../core/export-plan';
 import { composeCss } from '../core/pipeline';
@@ -40,6 +40,16 @@ export class ExportModal extends Modal {
 	 * toggle could only ever express "on".
 	 */
 	private fit: 'profile' | 'on' | 'off' = 'profile';
+	/**
+	 * Per-export zoom, as a percentage. `null` means "whatever the profile says".
+	 *
+	 * The same number `printScale` has always been — Chromium's print scale, applied to the
+	 * finished pages — reached from the modal rather than only from the profile, because
+	 * "this one note wants to be smaller" is a per-export thought, not a per-profile one.
+	 */
+	private zoom: number | null = null;
+	/** Held so the fit and profile dropdowns can grey it out and re-seat it. */
+	private zoomSlider: SliderComponent | null = null;
 	/**
 	 * The pagination currently in flight, plus whether another was asked for while it ran.
 	 *
@@ -86,6 +96,10 @@ export class ExportModal extends Modal {
 				const next = this.settings.profiles.find((profile) => profile.id === value);
 				if (next === undefined) return;
 				this.profile = next;
+				// A zoom the user has not touched follows the new profile, and whether the
+				// slider is live at all depends on that profile's own fit setting.
+				if (this.zoom === null) this.zoomSlider?.setValue(clampZoom(next.page.printScale));
+				this.syncZoomEnabled();
 				void this.repaginate();
 			});
 		});
@@ -114,11 +128,27 @@ export class ExportModal extends Modal {
 				dropdown.setValue(this.fit);
 				dropdown.onChange((value) => {
 					this.fit = value === 'on' || value === 'off' ? value : 'profile';
+					this.syncZoomEnabled();
 					// No re-pagination: the scale is applied by `printToPDF`, after the pages are
 					// laid out, so nothing on screen changes and re-paginating would only cost
 					// a render for no visible difference.
 				});
 			});
+
+		new Setting(controls)
+			.setName('Zoom')
+			.setDesc('Scales the whole PDF, where 100 is unscaled. Fit to page overrides it when on.')
+			.addSlider((slider) => {
+				this.zoomSlider = slider;
+				slider
+					.setLimits(ZOOM_MIN, ZOOM_MAX, ZOOM_STEP)
+					.setValue(clampZoom(this.profile.page.printScale))
+					.setDynamicTooltip()
+					.onChange((value) => {
+						this.zoom = value;
+					});
+			});
+		this.syncZoomEnabled();
 
 		new Setting(controls)
 			.setName('File name')
@@ -192,11 +222,28 @@ export class ExportModal extends Modal {
 	 * tab, and a per-export choice that quietly rewrote it would outlive the modal.
 	 */
 	private effectiveProfile(): Profile {
-		if (this.orientation === 'profile' && this.fit === 'profile') return this.profile;
+		if (this.orientation === 'profile' && this.fit === 'profile' && this.zoom === null) return this.profile;
 		const copy = structuredCloneProfile(this.profile);
 		if (this.orientation !== 'profile') copy.page.orientation = this.orientation;
 		if (this.fit !== 'profile') copy.page.fitToPage = this.fit === 'on';
+		if (this.zoom !== null) copy.page.printScale = this.zoom;
 		return copy;
+	}
+
+	/** Whether fit-to-page will run for this export, profile default included. */
+	private fitsToPage(): boolean {
+		return this.fit === 'profile' ? this.profile.page.fitToPage === true : this.fit === 'on';
+	}
+
+	/**
+	 * Grey the zoom slider out while fit-to-page will decide the scale instead.
+	 *
+	 * A control that silently does nothing is worse than one that is visibly unavailable: the
+	 * fit measurement *replaces* the print scale, it does not compose with it, and a zoom that
+	 * looked live but changed nothing about the PDF would read as a bug.
+	 */
+	private syncZoomEnabled(): void {
+		this.zoomSlider?.setDisabled(this.fitsToPage());
 	}
 
 	private async paginateOnce(): Promise<void> {
@@ -307,4 +354,21 @@ export class ExportModal extends Modal {
 
 export function describeError(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+/** The zoom slider's range. Matches the profile setting's, so the two agree on what is sane. */
+const ZOOM_MIN = 40;
+const ZOOM_MAX = 200;
+const ZOOM_STEP = 5;
+
+/**
+ * A percentage the slider can actually display.
+ *
+ * `data.json` is user-editable and predates this field, so a profile's `printScale` can be
+ * absent or nonsense; a slider handed a value outside its limits throws its handle off the
+ * track. The export clamps the scale again for Chromium regardless.
+ */
+function clampZoom(value: number): number {
+	if (!Number.isFinite(value)) return 100;
+	return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value / ZOOM_STEP) * ZOOM_STEP));
 }
