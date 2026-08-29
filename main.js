@@ -4538,6 +4538,7 @@ function defaultPage() {
     keepHeadingsWithText: true,
     pageNumbering: "per-note",
     fitToPage: false,
+    fitAxis: "both",
     printScale: 100,
     orphans: 2,
     widows: 2
@@ -39387,6 +39388,26 @@ function planPerNoteNumbering(documentStartPages, pageCount) {
   return stamps;
 }
 
+// src/shell/fit-scale.ts
+function fitScaleScript(axis) {
+  const ratios = axis === "width" ? "rect.width / width" : axis === "height" ? "rect.height / height" : "rect.width / width, rect.height / height";
+  return `(() => {
+	const box = document.querySelector('.pagedjs_page_content');
+	if (!box) return 1;
+	const width = box.clientWidth;
+	const height = box.clientHeight;
+	if (!width || !height) return 1;
+	let worst = 1;
+	document.querySelectorAll('.pagedjs_page_content *').forEach((element) => {
+		if (element.children.length > 0) return;
+		const rect = element.getBoundingClientRect();
+		if (!rect.width && !rect.height) return;
+		worst = Math.max(worst, ${ratios});
+	});
+	return 1 / worst;
+})()`;
+}
+
 // src/shell/mathjax.ts
 var MATHJAX_STYLE_ID = "MJX-CHTML-styles";
 var MATH_MARKER = "<mjx-container";
@@ -39737,7 +39758,7 @@ var PagedJsWebviewBackend = class {
   async resolveScale(webview, page) {
     if (page.fitToPage !== true) return clampScale(page.printScale / 100);
     try {
-      const measured = await webview.run(FIT_SCALE_SCRIPT);
+      const measured = await webview.run(fitScaleScript(page.fitAxis));
       return clampScale(measured);
     } catch (error2) {
       console.debug("[multi-exporter] fit-to-page measurement unavailable; printing unscaled", error2);
@@ -40013,21 +40034,6 @@ var DIAGNOSTIC_SCRIPT = `(() => {
 		oversized: oversized.slice(0, 20),
 		contentBox,
 	};
-})()`;
-var FIT_SCALE_SCRIPT = `(() => {
-	const box = document.querySelector('.pagedjs_page_content');
-	if (!box) return 1;
-	const width = box.clientWidth;
-	const height = box.clientHeight;
-	if (!width || !height) return 1;
-	let worst = 1;
-	document.querySelectorAll('.pagedjs_page_content *').forEach((element) => {
-		if (element.children.length > 0) return;
-		const rect = element.getBoundingClientRect();
-		if (!rect.width && !rect.height) return;
-		worst = Math.max(worst, rect.width / width, rect.height / height);
-	});
-	return 1 / worst;
 })()`;
 var DOCUMENT_START_PAGES_SCRIPT = `(() => {
 	const pages = Array.from(document.querySelectorAll('.pagedjs_page'));
@@ -56161,13 +56167,15 @@ var ExportModal = class extends import_obsidian5.Modal {
         void this.repaginate();
       });
     });
-    new import_obsidian5.Setting(controls).setName("Fit to page").setDesc("For this export only. Shrinks the finished pages until the widest content fits.").addDropdown((dropdown) => {
+    new import_obsidian5.Setting(controls).setName("Fit to page").setDesc("For this export only. Shrinks the finished pages until the chosen constraint is met.").addDropdown((dropdown) => {
       dropdown.addOption("profile", "Profile default");
-      dropdown.addOption("on", "On");
       dropdown.addOption("off", "Off");
+      dropdown.addOption("width", "Fit width");
+      dropdown.addOption("height", "Fit height");
+      dropdown.addOption("both", "Fit both");
       dropdown.setValue(this.fit);
       dropdown.onChange((value) => {
-        this.fit = value === "on" || value === "off" ? value : "profile";
+        this.fit = isFitOverride(value) ? value : "profile";
         this.syncZoomEnabled();
       });
     });
@@ -56234,13 +56242,18 @@ var ExportModal = class extends import_obsidian5.Modal {
     if (this.orientation === "profile" && this.fit === "profile" && this.zoom === null) return this.profile;
     const copy = structuredCloneProfile(this.profile);
     if (this.orientation !== "profile") copy.page.orientation = this.orientation;
-    if (this.fit !== "profile") copy.page.fitToPage = this.fit === "on";
+    if (this.fit === "off") {
+      copy.page.fitToPage = false;
+    } else if (this.fit !== "profile") {
+      copy.page.fitToPage = true;
+      copy.page.fitAxis = this.fit;
+    }
     if (this.zoom !== null) copy.page.printScale = this.zoom;
     return copy;
   }
   /** Whether fit-to-page will run for this export, profile default included. */
   fitsToPage() {
-    return this.fit === "profile" ? this.profile.page.fitToPage === true : this.fit === "on";
+    return this.fit === "profile" ? this.profile.page.fitToPage === true : this.fit !== "off";
   }
   /**
    * Grey the zoom slider out while fit-to-page will decide the scale instead.
@@ -56342,6 +56355,9 @@ var ExportModal = class extends import_obsidian5.Modal {
 };
 function describeError(error2) {
   return error2 instanceof Error ? error2.message : String(error2);
+}
+function isFitOverride(value) {
+  return value === "profile" || value === "off" || value === "width" || value === "height" || value === "both";
 }
 var ZOOM_MIN = 40;
 var ZOOM_MAX = 200;
@@ -56746,7 +56762,21 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
         this.display();
       })
     );
-    if (!profile.page.fitToPage) {
+    if (profile.page.fitToPage) {
+      new import_obsidian8.Setting(editor).setName("Fit to").setDesc(
+        "Which page constraint is measured. The print scale is one uniform number, so this chooses what to fit for, not how to squeeze \u2014 Both satisfies the harsher of the two."
+      ).addDropdown((dropdown) => {
+        var _a;
+        dropdown.addOption("width", "Width");
+        dropdown.addOption("height", "Height");
+        dropdown.addOption("both", "Both");
+        dropdown.setValue((_a = profile.page.fitAxis) != null ? _a : "both");
+        dropdown.onChange(async (value) => {
+          profile.page.fitAxis = value === "width" || value === "height" ? value : "both";
+          await this.save();
+        });
+      });
+    } else {
       new import_obsidian8.Setting(editor).setName("Print scale").setDesc("Percentage the finished pages are printed at, where 100 is unscaled.").addSlider(
         (slider) => slider.setLimits(40, 200, 5).setValue(clampPercent(profile.page.printScale)).setDynamicTooltip().onChange(async (value) => {
           profile.page.printScale = value;

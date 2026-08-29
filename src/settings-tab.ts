@@ -278,7 +278,24 @@ export class MultiExporterSettingTab extends PluginSettingTab {
 				}),
 			);
 
-		if (!profile.page.fitToPage) {
+		if (profile.page.fitToPage) {
+			new Setting(editor)
+				.setName('Fit to')
+				.setDesc(
+					'Which page constraint is measured. The print scale is one uniform number, so this ' +
+						'chooses what to fit for, not how to squeeze — Both satisfies the harsher of the two.',
+				)
+				.addDropdown((dropdown) => {
+					dropdown.addOption('width', 'Width');
+					dropdown.addOption('height', 'Height');
+					dropdown.addOption('both', 'Both');
+					dropdown.setValue(profile.page.fitAxis ?? 'both');
+					dropdown.onChange(async (value) => {
+						profile.page.fitAxis = value === 'width' || value === 'height' ? value : 'both';
+						await this.save();
+					});
+				});
+		} else {
 			new Setting(editor)
 				.setName('Print scale')
 				.setDesc('Percentage the finished pages are printed at, where 100 is unscaled.')

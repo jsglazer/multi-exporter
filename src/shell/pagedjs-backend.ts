@@ -13,6 +13,7 @@ import type {
 import { planPerNoteNumbering } from '../core/page-numbering';
 import type { PageStamp } from '../core/page-numbering';
 import { PAGEDJS_BACKEND_ID } from '../core/profiles';
+import { fitScaleScript } from './fit-scale';
 import { mathJaxCss } from './mathjax';
 import type { PageConfig, PageNumbering } from '../core/types';
 
@@ -405,7 +406,7 @@ export class PagedJsWebviewBackend implements ExportBackend {
 	private async resolveScale(webview: PreviewWebview, page: PageConfig): Promise<number> {
 		if (page.fitToPage !== true) return clampScale(page.printScale / 100);
 		try {
-			const measured = await webview.run<number>(FIT_SCALE_SCRIPT);
+			const measured = await webview.run<number>(fitScaleScript(page.fitAxis));
 			return clampScale(measured);
 		} catch (error) {
 			console.debug('[multi-exporter] fit-to-page measurement unavailable; printing unscaled', error);
@@ -806,35 +807,6 @@ const DIAGNOSTIC_SCRIPT = `(() => {
 		oversized: oversized.slice(0, 20),
 		contentBox,
 	};
-})()`;
-
-/**
- * The scale at which the worst-overflowing element fits its page box.
- *
- * Only leaf elements are measured, and only against the *content* box — the area paged.js
- * gave the flow after margins and furniture. An ancestor is as wide as its widest child, so
- * counting containers too would report the same overflow several times over and change
- * nothing about the answer.
- *
- * Never scales up: an export that fits already is printed at 1. The floor is there because a
- * single runaway element — a 4000px screenshot that resisted `max-width` — must not shrink
- * the body text to nothing; past that point the honest outcome is a clipped figure on a
- * readable page, and the console warning from the diagnostics pass says which element.
- */
-const FIT_SCALE_SCRIPT = `(() => {
-	const box = document.querySelector('.pagedjs_page_content');
-	if (!box) return 1;
-	const width = box.clientWidth;
-	const height = box.clientHeight;
-	if (!width || !height) return 1;
-	let worst = 1;
-	document.querySelectorAll('.pagedjs_page_content *').forEach((element) => {
-		if (element.children.length > 0) return;
-		const rect = element.getBoundingClientRect();
-		if (!rect.width && !rect.height) return;
-		worst = Math.max(worst, rect.width / width, rect.height / height);
-	});
-	return 1 / worst;
 })()`;
 
 /** First page index of each `.mx-document` section, in document order. */

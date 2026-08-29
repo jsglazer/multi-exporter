@@ -22,7 +22,14 @@ import { describe, expect, it } from 'vitest';
  * no headless environment has. Parsing is what catches the whole class anyway.
  */
 
-const SOURCE = readFileSync(join(__dirname, '..', 'src', 'shell', 'pagedjs-backend.ts'), 'utf8');
+/**
+ * Every module that builds a guest script. More than one now: the fit measurement lives in
+ * its own file so that what it measures can be asserted directly, and a script that moved out
+ * of the backend must not quietly move out of this check with it.
+ */
+const SOURCE = ['pagedjs-backend.ts', 'fit-scale.ts']
+	.map((file) => readFileSync(join(__dirname, '..', 'src', 'shell', file), 'utf8'))
+	.join('\n');
 
 /**
  * Pull every guest script out of the module by the shape they all share: a backtick literal

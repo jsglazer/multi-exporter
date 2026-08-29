@@ -19,6 +19,9 @@ export type PageSize = 'Letter' | 'Legal' | 'Tabloid' | 'A4' | 'A5';
  */
 export type PageNumbering = 'per-note' | 'continuous';
 
+/** Which page constraint fit-to-page measures against. See `PageConfig.fitAxis`. */
+export type FitAxis = 'width' | 'height' | 'both';
+
 export interface PageMargins {
 	top: string;
 	right: string;
@@ -84,6 +87,20 @@ export interface PageConfig {
 	 * keep their relative sizes.
 	 */
 	fitToPage: boolean;
+	/**
+	 * Which overflow `fitToPage` measures.
+	 *
+	 * The print scale is a **single uniform number** — Chromium has no way to squeeze one axis
+	 * and not the other — so this does not choose how to scale, it chooses what to scale *for*.
+	 * `width` looks only at content wider than the text column, `height` only at content taller
+	 * than the page box, and `both` at whichever is worse.
+	 *
+	 * The distinction matters because the two constraints disagree. A wide table wants width
+	 * fitting; a tall diagram wants height fitting; and `both` on a document with one of each
+	 * shrinks everything to satisfy the harsher of the two, which is often much more than the
+	 * page actually needed.
+	 */
+	fitAxis: FitAxis;
 	/** Print scale as a percentage, used when `fitToPage` is off. 100 is unscaled. */
 	printScale: number;
 	orphans: number;

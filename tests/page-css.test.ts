@@ -29,6 +29,7 @@ function config(overrides: Partial<PageConfig> = {}): PageConfig {
 		keepHeadingsWithText: false,
 		pageNumbering: 'continuous',
 		fitToPage: false,
+		fitAxis: 'both',
 		printScale: 100,
 		orphans: 2,
 		widows: 2,

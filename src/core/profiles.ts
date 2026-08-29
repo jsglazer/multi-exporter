@@ -35,6 +35,7 @@ function defaultPage(): PageConfig {
 		keepHeadingsWithText: true,
 		pageNumbering: 'per-note',
 		fitToPage: false,
+		fitAxis: 'both',
 		printScale: 100,
 		orphans: 2,
 		widows: 2,

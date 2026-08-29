@@ -39,7 +39,7 @@ export class ExportModal extends Modal {
 	 * on has to be overridable in the direction that turns it *off* for one run — a two-state
 	 * toggle could only ever express "on".
 	 */
-	private fit: 'profile' | 'on' | 'off' = 'profile';
+	private fit: FitOverride = 'profile';
 	/**
 	 * Per-export zoom, as a percentage. `null` means "whatever the profile says".
 	 *
@@ -120,14 +120,16 @@ export class ExportModal extends Modal {
 
 		new Setting(controls)
 			.setName('Fit to page')
-			.setDesc('For this export only. Shrinks the finished pages until the widest content fits.')
+			.setDesc('For this export only. Shrinks the finished pages until the chosen constraint is met.')
 			.addDropdown((dropdown) => {
 				dropdown.addOption('profile', 'Profile default');
-				dropdown.addOption('on', 'On');
 				dropdown.addOption('off', 'Off');
+				dropdown.addOption('width', 'Fit width');
+				dropdown.addOption('height', 'Fit height');
+				dropdown.addOption('both', 'Fit both');
 				dropdown.setValue(this.fit);
 				dropdown.onChange((value) => {
-					this.fit = value === 'on' || value === 'off' ? value : 'profile';
+					this.fit = isFitOverride(value) ? value : 'profile';
 					this.syncZoomEnabled();
 					// No re-pagination: the scale is applied by `printToPDF`, after the pages are
 					// laid out, so nothing on screen changes and re-paginating would only cost
@@ -225,14 +227,19 @@ export class ExportModal extends Modal {
 		if (this.orientation === 'profile' && this.fit === 'profile' && this.zoom === null) return this.profile;
 		const copy = structuredCloneProfile(this.profile);
 		if (this.orientation !== 'profile') copy.page.orientation = this.orientation;
-		if (this.fit !== 'profile') copy.page.fitToPage = this.fit === 'on';
+		if (this.fit === 'off') {
+			copy.page.fitToPage = false;
+		} else if (this.fit !== 'profile') {
+			copy.page.fitToPage = true;
+			copy.page.fitAxis = this.fit;
+		}
 		if (this.zoom !== null) copy.page.printScale = this.zoom;
 		return copy;
 	}
 
 	/** Whether fit-to-page will run for this export, profile default included. */
 	private fitsToPage(): boolean {
-		return this.fit === 'profile' ? this.profile.page.fitToPage === true : this.fit === 'on';
+		return this.fit === 'profile' ? this.profile.page.fitToPage === true : this.fit !== 'off';
 	}
 
 	/**
@@ -354,6 +361,19 @@ export class ExportModal extends Modal {
 
 export function describeError(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * The fit dropdown's states: defer to the profile, off, or one of the three constraints.
+ *
+ * The axis is folded into this one control rather than given a second dropdown that would be
+ * meaningless three-fifths of the time — there is no axis to choose when fitting is off, and
+ * none to choose when the profile is deciding.
+ */
+type FitOverride = 'profile' | 'off' | 'width' | 'height' | 'both';
+
+function isFitOverride(value: string): value is FitOverride {
+	return value === 'profile' || value === 'off' || value === 'width' || value === 'height' || value === 'both';
 }
 
 /** The zoom slider's range. Matches the profile setting's, so the two agree on what is sane. */
