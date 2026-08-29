@@ -13,6 +13,7 @@ import type {
 import { planPerNoteNumbering } from '../core/page-numbering';
 import type { PageStamp } from '../core/page-numbering';
 import { PAGEDJS_BACKEND_ID } from '../core/profiles';
+import { mathJaxCss } from './mathjax';
 import type { PageConfig, PageNumbering } from '../core/types';
 
 /**
@@ -112,7 +113,7 @@ export class PagedJsWebviewBackend implements ExportBackend {
 		return await this.withGuestRecovery('the preview', async () => {
 			const webview = this.container();
 			await this.ensurePolyfill(webview);
-			await this.runPagination(webview, paginateScript(request.html, request.css, true));
+			await this.runPagination(webview, paginateScript(request.html, request.css, true, await mathJaxCss(request.html)));
 			const map = await this.readPageMap(webview);
 			// Before anything measures or scales: the preview must show the same numbering the
 			// PDF will carry, or the one guarantee this plugin makes is broken.
@@ -191,7 +192,7 @@ export class PagedJsWebviewBackend implements ExportBackend {
 		// `false`: no preview chrome and no fit transform, so what Chromium prints is the
 		// page boxes alone — `printBackground` would otherwise paint the preview's backdrop
 		// across every page.
-		await this.runPagination(webview, paginateScript(html, request.css, false), request.isCancelled);
+		await this.runPagination(webview, paginateScript(html, request.css, false, await mathJaxCss(html)), request.isCancelled);
 		if (cancelled()) throw new ExportCancelled();
 
 		const map = await this.readPageMap(webview);
@@ -455,7 +456,7 @@ export class PagedJsWebviewBackend implements ExportBackend {
 function bootstrapScript(pagedJsSource: string): string {
 	return `(() => {
 	document.open();
-	document.write('<!doctype html><html><head><meta charset="utf-8"><style id="mx-chrome" media="screen"></style></head><body></body></html>');
+	document.write('<!doctype html><html><head><meta charset="utf-8"><style id="mx-chrome" media="screen"></style><style id="mx-math"></style></head><body></body></html>');
 	document.close();
 	// Drive paged.js's render queue from a timer instead of the compositor.
 	//
@@ -493,7 +494,7 @@ function bootstrapScript(pagedJsSource: string): string {
  * browser to ignore every `@page` rule, and pagination then silently falls back to the
  * polyfill's built-in 8.5×11in default with no headers or footers at all.
  */
-function paginateScript(html: string, css: string, previewChrome: boolean): string {
+function paginateScript(html: string, css: string, previewChrome: boolean, mathCss: string): string {
 	return `(async () => {
 	${AFTER_PARSED_INSTRUMENT}
 	// Each run builds a fresh Previewer, so the previous one's polisher output has to go
@@ -508,6 +509,11 @@ function paginateScript(html: string, css: string, previewChrome: boolean): stri
 
 	document.documentElement.classList.toggle('mx-preview-mode', ${previewChrome ? 'true' : 'false'});
 	document.getElementById('mx-chrome').textContent = ${JSON.stringify(PREVIEW_CHROME_CSS)};
+	// MathJax's own generated stylesheet, fonts inlined. An ordinary document stylesheet, not
+	// one of the sheets handed to the polisher: it holds no @page rules, so the polisher would
+	// gain nothing from parsing a megabyte of base64, and paged.js only ever collects document
+	// styles itself when it is given none — which never happens here.
+	document.getElementById('mx-math').textContent = ${JSON.stringify(mathCss)};
 	document.documentElement.style.removeProperty('--mx-preview-scale');
 
 	// Stage markers, for the watchdog to read back if this never returns.

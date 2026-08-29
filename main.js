@@ -5035,8 +5035,8 @@ var READY_TIMEOUT_MS = 15e3;
 var PREVIEW_CONTAINER_CLASS = "mx-preview-container";
 var PREVIEW_OFFSCREEN_CLASS = "mx-preview-offscreen";
 function createPreviewWebview(parent, partition) {
-  const document = parent.ownerDocument;
-  const element = document.createElement("webview");
+  const document2 = parent.ownerDocument;
+  const element = document2.createElement("webview");
   element.setAttribute("class", PREVIEW_CONTAINER_CLASS);
   element.setAttribute("partition", partition);
   element.setAttribute("nodeintegration", "off");
@@ -5786,10 +5786,10 @@ async function runMerged(plan, profile, citeKeySet, deps, report, cancelled, pro
     ...deps.isCancelled === void 0 ? {} : { isCancelled: deps.isCancelled }
   });
   const outline = mergeDocumentOutlines(
-    documents.map((document, index) => {
+    documents.map((document2, index) => {
       var _a2;
       return {
-        title: document.title,
+        title: document2.title,
         startPageIndex: (_a2 = result.documentStartPages[index]) != null ? _a2 : 0,
         headings: headingsForDocument(result.headings, result.documentStartPages, index)
       };
@@ -39387,6 +39387,80 @@ function planPerNoteNumbering(documentStartPages, pageCount) {
   return stamps;
 }
 
+// src/shell/mathjax.ts
+var MATHJAX_STYLE_ID = "MJX-CHTML-styles";
+var MATH_MARKER = "<mjx-container";
+var cachedCss = null;
+var fontCache = /* @__PURE__ */ new Map();
+function containsMath(html) {
+  return html.includes(MATH_MARKER);
+}
+async function mathJaxCss(html) {
+  if (!containsMath(html)) return "";
+  if (cachedCss !== null) return cachedCss;
+  try {
+    const source = readStyleSheet();
+    cachedCss = source === "" ? "" : await inlineFonts(source);
+  } catch (error2) {
+    console.warn("[multi-exporter] MathJax styles could not be collected; formulas may print blank.", error2);
+    cachedCss = "";
+  }
+  return cachedCss;
+}
+function readStyleSheet() {
+  var _a, _b, _c;
+  const element = (_a = activeDocument.getElementById(MATHJAX_STYLE_ID)) != null ? _a : (
+    // eslint-disable-next-line obsidianmd/prefer-active-doc -- the fallback IS the main document
+    document.getElementById(MATHJAX_STYLE_ID)
+  );
+  if (!(element instanceof HTMLStyleElement)) return "";
+  try {
+    const rules = (_b = element.sheet) == null ? void 0 : _b.cssRules;
+    if (rules !== void 0 && rules.length > 0) {
+      const text = [];
+      for (let index = 0; index < rules.length; index++) {
+        const rule = rules[index];
+        if (rule !== void 0) text.push(rule.cssText);
+      }
+      return text.join("\n");
+    }
+  } catch (e) {
+  }
+  return (_c = element.textContent) != null ? _c : "";
+}
+var CSS_URL = /url\(\s*(['"]?)([^'")]+)\1\s*\)/g;
+async function inlineFonts(css) {
+  const urls = /* @__PURE__ */ new Set();
+  for (const match of css.matchAll(CSS_URL)) {
+    const url = match[2];
+    if (url !== void 0 && !url.startsWith("data:")) urls.add(url);
+  }
+  await Promise.all([...urls].map((url) => cacheFont(url)));
+  return css.replace(CSS_URL, (whole, _quote, url) => {
+    const inlined = fontCache.get(url);
+    return inlined === void 0 ? whole : `url(${inlined})`;
+  });
+}
+async function cacheFont(url) {
+  if (fontCache.has(url)) return;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return;
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    fontCache.set(url, toDataUri(fontMimeType(url), bytes));
+  } catch (e) {
+  }
+}
+function fontMimeType(url) {
+  var _a;
+  const path = (_a = url.split("?")[0]) != null ? _a : url;
+  if (path.endsWith(".woff2")) return "font/woff2";
+  if (path.endsWith(".woff")) return "font/woff";
+  if (path.endsWith(".otf")) return "font/otf";
+  if (path.endsWith(".ttf")) return "font/ttf";
+  return "application/octet-stream";
+}
+
 // src/shell/pagedjs-backend.ts
 var READY_FLAG = "__mxPagedReady";
 var PAGINATION_POLL_MS = 1e3;
@@ -39439,7 +39513,7 @@ var PagedJsWebviewBackend = class {
     return await this.withGuestRecovery("the preview", async () => {
       const webview = this.container();
       await this.ensurePolyfill(webview);
-      await this.runPagination(webview, paginateScript(request.html, request.css, true));
+      await this.runPagination(webview, paginateScript(request.html, request.css, true, await mathJaxCss(request.html)));
       const map = await this.readPageMap(webview);
       await this.applyNumbering(webview, request.page.pageNumbering, map.pageCount);
       await this.reportOverflow(webview);
@@ -39498,7 +39572,7 @@ var PagedJsWebviewBackend = class {
     await this.ensurePolyfill(webview);
     const html = wrapDocumentSections(request.documents);
     (_a = request.onProgress) == null ? void 0 : _a.call(request, 0.1, "Paginating");
-    await this.runPagination(webview, paginateScript(html, request.css, false), request.isCancelled);
+    await this.runPagination(webview, paginateScript(html, request.css, false, await mathJaxCss(html)), request.isCancelled);
     if (cancelled()) throw new ExportCancelled();
     const map = await this.readPageMap(webview);
     const documentStartPages = await webview.run(DOCUMENT_START_PAGES_SCRIPT);
@@ -39703,7 +39777,7 @@ var PagedJsWebviewBackend = class {
 function bootstrapScript(pagedJsSource) {
   return `(() => {
 	document.open();
-	document.write('<!doctype html><html><head><meta charset="utf-8"><style id="mx-chrome" media="screen"></style></head><body></body></html>');
+	document.write('<!doctype html><html><head><meta charset="utf-8"><style id="mx-chrome" media="screen"></style><style id="mx-math"></style></head><body></body></html>');
 	document.close();
 	// Drive paged.js's render queue from a timer instead of the compositor.
 	//
@@ -39729,7 +39803,7 @@ function bootstrapScript(pagedJsSource) {
 	return true;
 })()`;
 }
-function paginateScript(html, css, previewChrome) {
+function paginateScript(html, css, previewChrome, mathCss) {
   return `(async () => {
 	${AFTER_PARSED_INSTRUMENT}
 	// Each run builds a fresh Previewer, so the previous one's polisher output has to go
@@ -39744,6 +39818,11 @@ function paginateScript(html, css, previewChrome) {
 
 	document.documentElement.classList.toggle('mx-preview-mode', ${previewChrome ? "true" : "false"});
 	document.getElementById('mx-chrome').textContent = ${JSON.stringify(PREVIEW_CHROME_CSS)};
+	// MathJax's own generated stylesheet, fonts inlined. An ordinary document stylesheet, not
+	// one of the sheets handed to the polisher: it holds no @page rules, so the polisher would
+	// gain nothing from parsing a megabyte of base64, and paged.js only ever collects document
+	// styles itself when it is given none \u2014 which never happens here.
+	document.getElementById('mx-math').textContent = ${JSON.stringify(mathCss)};
 	document.documentElement.style.removeProperty('--mx-preview-scale');
 
 	// Stage markers, for the watchdog to read back if this never returns.
@@ -39994,10 +40073,10 @@ function describeStuckHandlers(hooks) {
 function wrapDocumentSections(documents, options = {}) {
   var _a;
   const stamp = formatExportStamp((_a = options.exportedAt) != null ? _a : /* @__PURE__ */ new Date());
-  return documents.map((document, index) => {
+  return documents.map((document2, index) => {
     const first = index === 0 ? " mx-document-first" : "";
-    const meta = `<div class="mx-doc-meta" aria-hidden="true"><span class="mx-doc-title">${escapeText(document.title)}</span><span class="mx-doc-date">${escapeText(stamp)}</span></div>`;
-    return `<section class="mx-document${first}" data-mx-index="${index}" data-mx-source="${escapeAttribute(document.sourcePath)}" data-mx-title="${escapeAttribute(document.title)}">${meta}${document.html}</section>`;
+    const meta = `<div class="mx-doc-meta" aria-hidden="true"><span class="mx-doc-title">${escapeText(document2.title)}</span><span class="mx-doc-date">${escapeText(stamp)}</span></div>`;
+    return `<section class="mx-document${first}" data-mx-index="${index}" data-mx-source="${escapeAttribute(document2.sourcePath)}" data-mx-title="${escapeAttribute(document2.title)}">${meta}${document2.html}</section>`;
   }).join("\n");
 }
 function formatExportStamp(when) {
@@ -40750,7 +40829,7 @@ var FontNames;
   FontNames2["Symbol"] = "Symbol";
   FontNames2["ZapfDingbats"] = "ZapfDingbats";
 })(FontNames || (FontNames = {}));
-var fontCache = {};
+var fontCache2 = {};
 var Font = (
   /** @class */
   (function() {
@@ -40764,7 +40843,7 @@ var Font = (
       };
     }
     Font2.load = function(fontName) {
-      var cachedFont = fontCache[fontName];
+      var cachedFont = fontCache2[fontName];
       if (cachedFont)
         return cachedFont;
       var json = decompressJson(compressedJsonForFontName[fontName]);
@@ -40780,7 +40859,7 @@ var Font = (
         acc[name1][name2] = width;
         return acc;
       }, {});
-      fontCache[fontName] = font;
+      fontCache2[fontName] = font;
       return font;
     };
     return Font2;
@@ -55404,9 +55483,9 @@ var PDFButton_default = PDFButton;
 var PdfLibOutlineInjector = class {
   async inject(pdf, outline) {
     if (outline.length === 0) return pdf;
-    const document = await PDFDocument_default.load(pdf);
-    const context = document.context;
-    const pageRefs = document.getPages().map((page) => page.ref);
+    const document2 = await PDFDocument_default.load(pdf);
+    const context = document2.context;
+    const pageRefs = document2.getPages().map((page) => page.ref);
     if (pageRefs.length === 0) return pdf;
     const rootRef = context.nextRef();
     const { firstRef, lastRef, count } = writeLevel(outline, rootRef);
@@ -55420,9 +55499,9 @@ var PdfLibOutlineInjector = class {
         Count: PDFNumber_default.of(count)
       })
     );
-    document.catalog.set(PDFName_default.of("Outlines"), rootRef);
-    document.catalog.set(PDFName_default.of("PageMode"), PDFName_default.of("UseOutlines"));
-    return await document.save();
+    document2.catalog.set(PDFName_default.of("Outlines"), rootRef);
+    document2.catalog.set(PDFName_default.of("PageMode"), PDFName_default.of("UseOutlines"));
+    return await document2.save();
     function writeLevel(nodes, parentRef) {
       var _a, _b;
       const refs = nodes.map(() => context.nextRef());
@@ -55655,8 +55734,8 @@ function rebuildTextNode(node, ops, plan, colors) {
   const text = (_a = node.nodeValue) != null ? _a : "";
   const wraps = ops.filter((op) => op.kind === "wrap").sort((a, b) => a.from - b.from);
   const markers = ops.filter((op) => op.kind === "marker").sort((a, b) => a.at - b.at);
-  const document = node.ownerDocument;
-  const fragment = document.createDocumentFragment();
+  const document2 = node.ownerDocument;
+  const fragment = document2.createDocumentFragment();
   let cursor = 0;
   let markerIndex = 0;
   const emitMarkersUpTo = (position) => {
@@ -55664,10 +55743,10 @@ function rebuildTextNode(node, ops, plan, colors) {
       const marker = markers[markerIndex];
       if (marker === void 0 || marker.at > position) break;
       if (marker.at > cursor) {
-        fragment.appendChild(document.createTextNode(text.slice(cursor, marker.at)));
+        fragment.appendChild(document2.createTextNode(text.slice(cursor, marker.at)));
         cursor = marker.at;
       }
-      fragment.appendChild(buildMarker(document, marker.placement, plan.mode));
+      fragment.appendChild(buildMarker(document2, marker.placement, plan.mode));
       markerIndex++;
     }
   };
@@ -55676,15 +55755,15 @@ function rebuildTextNode(node, ops, plan, colors) {
     const to = Math.max(from, wrap.to);
     if (to <= from) continue;
     emitMarkersUpTo(from);
-    if (from > cursor) fragment.appendChild(document.createTextNode(text.slice(cursor, from)));
-    const span = document.createElement("span");
+    if (from > cursor) fragment.appendChild(document2.createTextNode(text.slice(cursor, from)));
+    const span = document2.createElement("span");
     applyAnnotationStyle(span, wrap.placement, colors);
-    span.appendChild(document.createTextNode(text.slice(from, to)));
+    span.appendChild(document2.createTextNode(text.slice(from, to)));
     fragment.appendChild(span);
     cursor = to;
   }
   emitMarkersUpTo(text.length);
-  if (cursor < text.length) fragment.appendChild(document.createTextNode(text.slice(cursor)));
+  if (cursor < text.length) fragment.appendChild(document2.createTextNode(text.slice(cursor)));
   parent.replaceChild(fragment, node);
 }
 function applyAnnotationStyle(span, placement, colors) {
@@ -55700,25 +55779,25 @@ function applyAnnotationStyle(span, placement, colors) {
   if ((color == null ? void 0 : color.background) !== void 0) span.style.setProperty("background-color", color.background);
   if ((color == null ? void 0 : color.foreground) !== void 0) span.style.setProperty("color", color.foreground);
 }
-function buildMarker(document, placement, mode) {
+function buildMarker(document2, placement, mode) {
   const record = placement.annotation;
-  const marker = document.createElement("sup");
+  const marker = document2.createElement("sup");
   marker.addClass(ANNOTATION_MARKER_CLASS);
   marker.setAttribute("data-mx-annotation-id", record.id);
-  marker.appendChild(document.createTextNode(String(placement.number)));
+  marker.appendChild(document2.createTextNode(String(placement.number)));
   if (mode !== "gutter") return marker;
-  const holder = document.createDocumentFragment();
+  const holder = document2.createDocumentFragment();
   holder.appendChild(marker);
-  const card = document.createElement("span");
+  const card = document2.createElement("span");
   card.addClass(ANNOTATION_CARD_CLASS);
   if (record.category !== "") card.setAttribute("data-mx-category", record.category);
-  const number = document.createElement("span");
+  const number = document2.createElement("span");
   number.addClass(`${ANNOTATION_CARD_CLASS}-num`);
-  number.appendChild(document.createTextNode(String(placement.number)));
+  number.appendChild(document2.createTextNode(String(placement.number)));
   card.appendChild(number);
-  const body = document.createElement("span");
+  const body = document2.createElement("span");
   body.addClass(`${ANNOTATION_CARD_CLASS}-text`);
-  body.appendChild(document.createTextNode(record.comment));
+  body.appendChild(document2.createTextNode(record.comment));
   card.appendChild(body);
   holder.appendChild(card);
   return holder;
