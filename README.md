@@ -62,9 +62,11 @@ One paginated DOM feeds both the preview and the PDF writer. That property is st
 - **Citations and bibliography** via [`zotero-manager`](https://github.com/jsglazer/zotero-manager)'s public API. This plugin implements no citation formatting of its own.
 - **Image inlining** — remote and vault images become data URIs before pagination, so an export is reproducible and works offline.
 - **PDF Squeezer** — runs the `pdfs` CLI on the finished file when it is installed. Absence is not an error.
-- **`md-annotation` annotations** — read from that plugin's public API, not from the rendered page, so the export never depends on what its sidebar happened to be showing. Highlights are drawn in the category's own colour; a comment prints either as a numbered endnote or as a card in the page margin, decided by the profile and nothing else. Each annotation is located in the rendered note by its stored quote and context, and one that can no longer be found is **reported in the export report**, not silently dropped.
-- **Per-export orientation.** The single-note modal can print portrait or landscape for one run without touching the profile.
-- **Fit to page.** Optional: measure the finished pages and print at exactly the scale that brings the widest or tallest content inside the page box, instead of letting the paginator push an oversized table or screenshot whole onto a page of its own. Off, a fixed print-scale percentage is used instead.
+- **`md-annotation` annotations** — read from that plugin's public API, not from the rendered page, so the export never depends on what its sidebar happened to be showing. Highlights are drawn in the category's own colour; a comment prints either as a numbered endnote or as a card in the page margin, decided by the profile or by the export modal and never by another plugin's visibility toggles. Whatever that plugin drew into the rendered page is taken back out first — including the class it paints onto elements it does not own, such as a highlighted equation, which is unmarked in place rather than unwrapped. Each annotation is located in the rendered note by its stored quote and context, and one that can no longer be found is **reported in the export report**, not silently dropped.
+- **Per-export overrides.** The single-note modal can change **orientation**, **fit to page**, **zoom**, and **where annotations go** for one run without touching the profile — every one of them defaults to *Profile default*, which is not the same as pinning the value the profile currently holds: switch profile and an untouched control follows it.
+- **Fit to page.** Optional: measure the finished pages and print at exactly the scale that brings the widest or tallest content inside the page box, instead of letting the paginator push an oversized table or screenshot whole onto a page of its own. Off, a fixed print-scale percentage is used instead. Two numbers tune it, and they are two different mechanisms:
+  - **Pages wide** is a *tolerance*. Nothing flows sideways in CSS Paged Media, so this cannot mean two sheets side by side: `1` shrinks anything wider than the text column, `2` accepts content up to twice that width unscaled and only shrinks what is worse.
+  - **Pages tall** is a *target page count*, and a page count can only be changed by paginating again — so the export lays the flow out smaller and re-paginates until the document fits, bounded by four attempts and a floor past which the type would stop being readable. A target it cannot reach is noted in the console and the export completes at the floor. The preview runs the identical search, because the preview is the output.
 
 ## Installation
 
@@ -77,7 +79,7 @@ Not in the community plugin store yet. Install manually or with BRAT.
 ```sh
 npm install
 npm run build      # tsc --noEmit && esbuild → main.js
-npm test           # 238 headless tests, no Obsidian required
+npm test           # 297 headless tests, no Obsidian required
 ```
 
 ## Usage
@@ -122,7 +124,7 @@ Both are handed to paged.js's polisher, which is what makes `@page` real: page g
 | `.mx-document-first` | Also on the first note, for rules that should skip it |
 | `.mx-doc-meta` | Zero-height block opening each note, holding `.mx-doc-title` and `.mx-doc-date` |
 | `.mx-bibliography` | The appended bibliography block, with one `div` per entry |
-| `.mx-endnotes` | The endnotes block, when the profile puts annotations there |
+| `.mx-endnotes` | The endnotes block, when the profile or the export modal puts annotations there |
 | `.mx-citation` | A resolved citation link; carries `data-mx-citekey` |
 | `.mx-image-failed` | An image that could not be fetched, left in place as a marker |
 | `.mx-annotation` | A highlight; carries `data-mx-category` and, when it has a note, `data-mx-note` |
@@ -197,7 +199,7 @@ src/core/     Pure decision logic. Zero imports from `obsidian`, node `fs`, or t
 src/adapter/  The ONE module that touches undocumented internals and Electron.
 src/shell/    Obsidian/Electron implementations of the interfaces core declares.
 vendor/       Vendored, patched paged.js, with each diff checked in as a .patch.
-tests/        238 headless tests. Import only from src/core/.
+tests/        297 headless tests. Import only from src/core/.
 ```
 
 Every capability the pipeline needs — rendering, citations, image bytes, pagination, PDF surgery, disk — arrives as an injected interface, so the whole export sequence runs headlessly against fakes. Filesystem writes go through a `FileWriter`; tests inject `InMemoryFileWriter`, so a test run can never touch a real disk.
