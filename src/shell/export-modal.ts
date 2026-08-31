@@ -1,11 +1,12 @@
 import { Modal, Notice, Setting } from 'obsidian';
-import type { App, SliderComponent, TFile } from 'obsidian';
+import type { App, SliderComponent, TextComponent, TFile } from 'obsidian';
 import { showDirectoryDialog } from '../adapter/obsidian-internals';
 import { planSeparateExport, singleNoteDestination } from '../core/export-plan';
 import { composeCss } from '../core/pipeline';
 import { resolveProfileForPath } from '../core/profile-resolver';
 import { structuredCloneProfile } from '../core/profiles';
-import type { PluginSettings, Profile } from '../core/types';
+import { clampPagesTall, clampPagesWide } from '../core/fit-pages';
+import type { AnnotationMode, PluginSettings, Profile } from '../core/types';
 import { announceOutcome, ExportService } from './export-service';
 import { PagedJsWebviewBackend, wrapDocumentSections } from './pagedjs-backend';
 
@@ -48,8 +49,29 @@ export class ExportModal extends Modal {
 	 * "this one note wants to be smaller" is a per-export thought, not a per-profile one.
 	 */
 	private zoom: number | null = null;
+	/**
+	 * Per-export annotation mode, on the same terms as `orientation` and `fit` above.
+	 *
+	 * The profile flag stays authoritative when this is `'profile'`, which is the point:
+	 * nothing about `md-annotation`'s sidebar toggles reaches the PDF, and never will. What
+	 * this adds is the missing *deliberate* override — only the Manuscript profile ships
+	 * annotations on, so exporting an annotated note with any other profile silently drew
+	 * nothing, and the only way to change that was to edit the profile.
+	 */
+	private annotations: AnnotationOverride = 'profile';
+	/**
+	 * Per-export page targets. `null` means "whatever the profile says".
+	 *
+	 * `pagesWide` widens the fit's tolerance; `pagesTall` is a page-count target that
+	 * re-paginates. Both are only consulted when fit-to-page will actually run — see
+	 * `core/fit-pages.ts` for why they are two different mechanisms.
+	 */
+	private pagesWide: number | null = null;
+	private pagesTall: number | null = null;
 	/** Held so the fit and profile dropdowns can grey it out and re-seat it. */
 	private zoomSlider: SliderComponent | null = null;
+	/** Held for the same reason: the page inputs are dead while fit-to-page is off. */
+	private pageInputs: TextComponent[] = [];
 	/**
 	 * The pagination currently in flight, plus whether another was asked for while it ran.
 	 *
@@ -99,7 +121,7 @@ export class ExportModal extends Modal {
 				// A zoom the user has not touched follows the new profile, and whether the
 				// slider is live at all depends on that profile's own fit setting.
 				if (this.zoom === null) this.zoomSlider?.setValue(clampZoom(next.page.printScale));
-				this.syncZoomEnabled();
+				this.syncFitControls();
 				void this.repaginate();
 			});
 		});
@@ -130,11 +152,44 @@ export class ExportModal extends Modal {
 				dropdown.setValue(this.fit);
 				dropdown.onChange((value) => {
 					this.fit = isFitOverride(value) ? value : 'profile';
-					this.syncZoomEnabled();
-					// No re-pagination: the scale is applied by `printToPDF`, after the pages are
-					// laid out, so nothing on screen changes and re-paginating would only cost
-					// a render for no visible difference.
+					this.syncFitControls();
+					// Re-paginate only when a page-count target is live. The fit *scale* is applied
+					// by `printToPDF` after the pages are laid out, so it changes nothing on screen
+					// — but `pagesTall` changes the pagination itself, and turning fitting off has
+					// to put those pages back.
+					if (this.pagesTallTarget() > 0 || this.fit === 'off') void this.repaginate();
 				});
+			});
+
+		// Two inputs, because they are two mechanisms. Text rather than a slider: these are
+		// small exact integers a user knows the value of before they touch the control, and
+		// dragging to "3" is worse than typing it.
+		new Setting(controls)
+			.setName('Pages wide')
+			.setDesc('Page-widths of content the width fit allows before it shrinks anything. Blank follows the profile.')
+			.addText((text) => {
+				this.pageInputs.push(text);
+				text
+					.setPlaceholder(String(clampPagesWide(this.profile.page.fitPagesWide)))
+					.onChange((value) => {
+						this.pagesWide = value.trim() === '' ? null : clampPagesWide(Number(value));
+					});
+			});
+
+		new Setting(controls)
+			.setName('Pages tall')
+			.setDesc('Fit the note into this many pages by laying it out smaller. Blank or zero means no target.')
+			.addText((text) => {
+				this.pageInputs.push(text);
+				text
+					.setPlaceholder(String(clampPagesTall(this.profile.page.fitPagesTall)))
+					.onChange((value) => {
+						this.pagesTall = value.trim() === '' ? null : clampPagesTall(Number(value));
+						// This one *is* a pagination change, so the preview has to run it: the
+						// preview is the output, and showing eleven pages for an export that will
+						// produce eight is the drift this plugin exists to prevent.
+						void this.repaginate();
+					});
 			});
 
 		new Setting(controls)
@@ -150,7 +205,24 @@ export class ExportModal extends Modal {
 						this.zoom = value;
 					});
 			});
-		this.syncZoomEnabled();
+		new Setting(controls)
+			.setName('Annotations')
+			.setDesc('Where md-annotation comments go in this PDF. The sidebar never decides this.')
+			.addDropdown((dropdown) => {
+				dropdown.addOption('profile', 'Profile default');
+				dropdown.addOption('off', 'Off');
+				dropdown.addOption('gutter', 'Margin cards');
+				dropdown.addOption('endnotes', 'Endnotes');
+				dropdown.setValue(this.annotations);
+				dropdown.onChange((value) => {
+					this.annotations = isAnnotationOverride(value) ? value : 'profile';
+					// Unlike the fit controls this rewrites the document, so the preview has to
+					// render again — highlights, markers and cards are content, not print scale.
+					void this.repaginate();
+				});
+			});
+
+		this.syncFitControls();
 
 		new Setting(controls)
 			.setName('File name')
@@ -224,7 +296,16 @@ export class ExportModal extends Modal {
 	 * tab, and a per-export choice that quietly rewrote it would outlive the modal.
 	 */
 	private effectiveProfile(): Profile {
-		if (this.orientation === 'profile' && this.fit === 'profile' && this.zoom === null) return this.profile;
+		if (
+			this.orientation === 'profile' &&
+			this.fit === 'profile' &&
+			this.zoom === null &&
+			this.annotations === 'profile' &&
+			this.pagesWide === null &&
+			this.pagesTall === null
+		) {
+			return this.profile;
+		}
 		const copy = structuredCloneProfile(this.profile);
 		if (this.orientation !== 'profile') copy.page.orientation = this.orientation;
 		if (this.fit === 'off') {
@@ -233,7 +314,10 @@ export class ExportModal extends Modal {
 			copy.page.fitToPage = true;
 			copy.page.fitAxis = this.fit;
 		}
+		if (this.pagesWide !== null) copy.page.fitPagesWide = this.pagesWide;
+		if (this.pagesTall !== null) copy.page.fitPagesTall = this.pagesTall;
 		if (this.zoom !== null) copy.page.printScale = this.zoom;
+		if (this.annotations !== 'profile') copy.flags.annotationMode = this.annotations;
 		return copy;
 	}
 
@@ -242,15 +326,25 @@ export class ExportModal extends Modal {
 		return this.fit === 'profile' ? this.profile.page.fitToPage === true : this.fit !== 'off';
 	}
 
+	/** The page-count target this export will actually use, profile default included. */
+	private pagesTallTarget(): number {
+		if (!this.fitsToPage()) return 0;
+		return clampPagesTall(this.pagesTall ?? this.profile.page.fitPagesTall);
+	}
+
 	/**
-	 * Grey the zoom slider out while fit-to-page will decide the scale instead.
+	 * Grey out the controls fit-to-page has taken over, or that it has switched off.
 	 *
 	 * A control that silently does nothing is worse than one that is visibly unavailable: the
 	 * fit measurement *replaces* the print scale, it does not compose with it, and a zoom that
-	 * looked live but changed nothing about the PDF would read as a bug.
+	 * looked live but changed nothing about the PDF would read as a bug. The two page inputs
+	 * are the mirror image — they are read only while fitting is on, so they go dead when it
+	 * is off.
 	 */
-	private syncZoomEnabled(): void {
-		this.zoomSlider?.setDisabled(this.fitsToPage());
+	private syncFitControls(): void {
+		const fitting = this.fitsToPage();
+		this.zoomSlider?.setDisabled(fitting);
+		for (const input of this.pageInputs) input.setDisabled(!fitting);
 	}
 
 	private async paginateOnce(): Promise<void> {
@@ -371,6 +465,19 @@ export function describeError(error: unknown): string {
  * none to choose when the profile is deciding.
  */
 type FitOverride = 'profile' | 'off' | 'width' | 'height' | 'both';
+
+/**
+ * The annotation dropdown's states: defer to the profile, or name a mode outright.
+ *
+ * `'off'` is a real choice and not the same as `'profile'`, for the same reason it is on the
+ * fit dropdown: the Manuscript profile ships annotations on, and one export of it has to be
+ * able to turn them off without editing the profile every other export shares.
+ */
+type AnnotationOverride = 'profile' | AnnotationMode;
+
+function isAnnotationOverride(value: string): value is AnnotationOverride {
+	return value === 'profile' || value === 'off' || value === 'gutter' || value === 'endnotes';
+}
 
 function isFitOverride(value: string): value is FitOverride {
 	return value === 'profile' || value === 'off' || value === 'width' || value === 'height' || value === 'both';

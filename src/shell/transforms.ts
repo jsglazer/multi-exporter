@@ -70,6 +70,11 @@ export class DomTransforms implements DocumentTransforms {
 	 */
 	stripPluginAnnotations(note: RenderedNote, plan: AnnotationStripPlan): void {
 		for (const element of plan.remove) (element as unknown as HTMLElement).detach();
+		// Marked, not wrapped — so the mark comes off and the element stays. See
+		// `AnnotationStripClasses.unclass`.
+		for (const { element, className } of plan.unclass) {
+			(element as unknown as HTMLElement).removeClass(className);
+		}
 		for (const element of plan.unwrap) {
 			const span = element as unknown as HTMLElement;
 			const parent = span.parentNode;

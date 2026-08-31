@@ -1,3 +1,4 @@
+import { clampPagesWide } from '../core/fit-pages';
 import type { FitAxis } from '../core/types';
 
 /**
@@ -28,13 +29,18 @@ import type { FitAxis } from '../core/types';
  * must not shrink the body text to nothing; past that point the honest outcome is a clipped
  * figure on a readable page, and the diagnostics pass names the element in the console.
  */
-export function fitScaleScript(axis: FitAxis): string {
+export function fitScaleScript(axis: FitAxis, pagesWide = 1): string {
+	// The width allowance, folded into the script as a literal for the same reason the axis is:
+	// the whole thing is injected as source text, and a division by a constant of 1 is one the
+	// engine removes anyway. `pagesWide` of 1 therefore reproduces the previous script exactly.
+	const allowed = clampPagesWide(pagesWide);
+	const widthRatio = allowed === 1 ? 'rect.width / width' : `rect.width / (width * ${allowed})`;
 	const ratios =
 		axis === 'width'
-			? 'rect.width / width'
+			? widthRatio
 			: axis === 'height'
 				? 'rect.height / height'
-				: 'rect.width / width, rect.height / height';
+				: `${widthRatio}, rect.height / height`;
 	return `(() => {
 	const box = document.querySelector('.pagedjs_page_content');
 	if (!box) return 1;

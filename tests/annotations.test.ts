@@ -18,6 +18,7 @@ import { el, root } from './fakes/mock-dom';
 const STRIP: AnnotationStripClasses = {
 	unwrap: ['mdann-hl', 'mdann-anchor'],
 	remove: ['mdann-marker', 'mdann-gutter-host'],
+	unclass: ['mdann-widget-hl'],
 };
 
 const SENTENCE = 'A NAND gate needs four transistors, while a NOT gate needs two.';
@@ -47,6 +48,25 @@ describe('planAnnotationStrip', () => {
 		const plan = planAnnotationStrip(tree, STRIP);
 		expect(plan.unwrap).toHaveLength(1);
 		expect(plan.remove).toHaveLength(1);
+	});
+
+	// A class painted onto an element `md-annotation` does not own — a rendered MathJax
+	// container, a Live Preview widget. Unwrapping one dismantles the equation and removing
+	// one deletes it, so the mark comes off and the element stays.
+	it('takes the class off a marked foreign element instead of touching the element', () => {
+		const widget = el({ tag: 'mjx-container', classes: ['mdann-widget-hl'], text: 'E = mc²' });
+		const plan = planAnnotationStrip(root(widget), STRIP);
+		expect(plan.unwrap).toEqual([]);
+		expect(plan.remove).toEqual([]);
+		expect(plan.unclass).toEqual([{ element: widget, className: 'mdann-widget-hl' }]);
+	});
+
+	// Nothing about to be deleted needs tidying first.
+	it('does not bother unclassing something it is removing anyway', () => {
+		const tree = root(el({ tag: 'span', classes: ['mdann-marker', 'mdann-widget-hl'], text: '1' }));
+		const plan = planAnnotationStrip(tree, STRIP);
+		expect(plan.remove).toHaveLength(1);
+		expect(plan.unclass).toEqual([]);
 	});
 
 	// An element listed for removal is going away whole; unwrapping it as well would put its

@@ -127,11 +127,24 @@ export interface AnnotationStripClasses {
 	unwrap: readonly string[];
 	/** Elements the other plugin created outright: removed, content and all. */
 	remove: readonly string[];
+	/**
+	 * Classes painted onto elements the other plugin does **not** own: the class comes off
+	 * and the element stays exactly as it was.
+	 *
+	 * The third bucket exists because the other two would both destroy content here.
+	 * `md-annotation` marks a highlighted MathJax container or a Live Preview widget by
+	 * adding a class to it rather than wrapping it — its own teardown says so in as many
+	 * words — so removing the element deletes the equation, and unwrapping it dismantles
+	 * `<mjx-container>` into loose glyph spans. Neither is a highlight worth having.
+	 */
+	unclass: readonly string[];
 }
 
 export interface AnnotationStripPlan {
 	unwrap: ElementLike[];
 	remove: ElementLike[];
+	/** Element and the class to take off it. One entry per class, not per element. */
+	unclass: { element: ElementLike; className: string }[];
 }
 
 /**
@@ -150,8 +163,15 @@ export function planAnnotationStrip(root: RootLike, classes: AnnotationStripClas
 	};
 	const remove = collect(classes.remove);
 	const removeSet = new Set(remove);
+	const unclass: { element: ElementLike; className: string }[] = [];
+	for (const className of classes.unclass) {
+		for (const element of toArray(root.querySelectorAll(`.${className}`))) {
+			// Nothing about to be deleted needs tidying first.
+			if (!removeSet.has(element)) unclass.push({ element, className });
+		}
+	}
 	// An element listed for removal is not also unwrapped: it is going away whole.
-	return { unwrap: collect(classes.unwrap).filter((element) => !removeSet.has(element)), remove };
+	return { unwrap: collect(classes.unwrap).filter((element) => !removeSet.has(element)), remove, unclass };
 }
 
 /**

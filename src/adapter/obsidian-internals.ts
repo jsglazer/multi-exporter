@@ -86,7 +86,10 @@ export function getPluginStringSetting(app: App, pluginId: string, key: string):
  * annotations are drawn again from the API records, where the profile decides everything.
  *
  * Highlight and anchor spans wrap the *note's own words*, so they are unwrapped; markers and
- * gutter furniture are `md-annotation`'s own elements and go whole.
+ * gutter furniture are `md-annotation`'s own elements and go whole. `mdann-widget-hl` is
+ * neither: it is a class that plugin paints **onto an element it does not own** — a rendered
+ * MathJax container, a Live Preview widget — precisely because unwrapping such an element
+ * would tear it apart. So the class comes off and the element stays.
  *
  * A CSS class name is an undocumented-by-contract coupling to another plugin, which is why
  * this list lives behind this boundary with everything else that can move without warning.
@@ -94,6 +97,7 @@ export function getPluginStringSetting(app: App, pluginId: string, key: string):
 export const MD_ANNOTATION_STRIP_CLASSES: AnnotationStripClasses = {
 	unwrap: ['mdann-hl', 'mdann-anchor'],
 	remove: ['mdann-marker', 'mdann-gutter-host', 'mdann-gutter-card', 'mdann-gutter-leader', 'mdann-gutter-tick'],
+	unclass: ['mdann-widget-hl'],
 };
 
 /**

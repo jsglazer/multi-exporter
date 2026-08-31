@@ -40,6 +40,7 @@ import { el, internalLink, MockElement, root } from './fakes/mock-dom';
 const STRIP_CLASSES: AnnotationStripClasses = {
 	unwrap: ['mdann-hl'],
 	remove: ['mdann-marker'],
+	unclass: ['mdann-widget-hl'],
 };
 
 /** A stand-in for `md-annotation`'s API, holding whatever records a test wants back. */

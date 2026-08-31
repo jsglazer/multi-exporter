@@ -101,6 +101,28 @@ export interface PageConfig {
 	 * page actually needed.
 	 */
 	fitAxis: FitAxis;
+	/**
+	 * How many page-widths of content the width fit tolerates before it scales anything.
+	 *
+	 * Nothing flows sideways in CSS Paged Media, so this cannot mean two sheets side by side:
+	 * it is a *tolerance*. `1` is the strict reading — anything wider than the text column is
+	 * shrunk — and `2` accepts content up to twice that width unscaled, which is what a
+	 * landscape spread or a wide table printed at reading size actually wants.
+	 *
+	 * Height has no equivalent, deliberately: a single element taller than the page cannot be
+	 * spread over two pages by tolerating it, it just falls off. `fitPagesTall` is that axis's
+	 * answer, and it works by re-paginating rather than by tolerance.
+	 */
+	fitPagesWide: number;
+	/**
+	 * Target page count. `0` — the default — means there is no target.
+	 *
+	 * Unlike everything else in `fitToPage` this changes the *pagination*, not the print
+	 * scale: the export lays the flow out smaller and paginates again until the document fits
+	 * in this many pages, or until shrinking further would make it unreadable. See
+	 * `core/fit-pages.ts`.
+	 */
+	fitPagesTall: number;
 	/** Print scale as a percentage, used when `fitToPage` is off. 100 is unscaled. */
 	printScale: number;
 	orphans: number;

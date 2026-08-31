@@ -13,6 +13,13 @@ import type {
 import { planPerNoteNumbering } from '../core/page-numbering';
 import type { PageStamp } from '../core/page-numbering';
 import { PAGEDJS_BACKEND_ID } from '../core/profiles';
+import {
+	clampPagesTall,
+	clampPagesWide,
+	contentScaleCss,
+	MAX_FIT_ATTEMPTS,
+	nextContentScale,
+} from '../core/fit-pages';
 import { fitScaleScript } from './fit-scale';
 import { mathJaxCss } from './mathjax';
 import type { PageConfig, PageNumbering } from '../core/types';
@@ -114,8 +121,7 @@ export class PagedJsWebviewBackend implements ExportBackend {
 		return await this.withGuestRecovery('the preview', async () => {
 			const webview = this.container();
 			await this.ensurePolyfill(webview);
-			await this.runPagination(webview, paginateScript(request.html, request.css, true, await mathJaxCss(request.html)));
-			const map = await this.readPageMap(webview);
+			const map = await this.paginateToTarget(webview, request.html, request.css, request.page, true);
 			// Before anything measures or scales: the preview must show the same numbering the
 			// PDF will carry, or the one guarantee this plugin makes is broken.
 			await this.applyNumbering(webview, request.page.pageNumbering, map.pageCount);
@@ -193,10 +199,16 @@ export class PagedJsWebviewBackend implements ExportBackend {
 		// `false`: no preview chrome and no fit transform, so what Chromium prints is the
 		// page boxes alone — `printBackground` would otherwise paint the preview's backdrop
 		// across every page.
-		await this.runPagination(webview, paginateScript(html, request.css, false, await mathJaxCss(html)), request.isCancelled);
+		const map = await this.paginateToTarget(
+			webview,
+			html,
+			request.css,
+			request.profile.page,
+			false,
+			request.isCancelled,
+		);
 		if (cancelled()) throw new ExportCancelled();
 
-		const map = await this.readPageMap(webview);
 		const documentStartPages = await webview.run<number[]>(DOCUMENT_START_PAGES_SCRIPT);
 
 		await this.applyNumbering(webview, request.profile.page.pageNumbering, map.pageCount, documentStartPages);
@@ -218,6 +230,67 @@ export class PagedJsWebviewBackend implements ExportBackend {
 
 		request.onProgress?.(0.85, 'Building outline');
 		return { pdf, pageCount: map.pageCount, headings: map.headings, documentStartPages };
+	}
+
+	/**
+	 * Paginate, and keep paginating until the document fits the page target.
+	 *
+	 * With no target — the ordinary case, and every case before this existed — it is one
+	 * pagination and one page map, exactly as it was. With one, it is a bounded search: the
+	 * page count is a fact about the laid-out document and cannot be predicted from the
+	 * source, so the only way to hit a number of pages is to lay it out, count, lay it out
+	 * smaller, and count again. `core/fit-pages.ts` owns the arithmetic and the bounds; this
+	 * owns the guest.
+	 *
+	 * The preview runs the identical loop, because the preview is the output. A preview that
+	 * skipped it would show the eleven pages the export is about to turn into eight.
+	 *
+	 * A target that cannot be met inside the scale floor is reported to the console and the
+	 * export finishes at the floor: a readable document of the wrong length beats an
+	 * unreadable one of the right length, and failing the export outright over a page count
+	 * would be worse than either.
+	 */
+	private async paginateToTarget(
+		webview: PreviewWebview,
+		html: string,
+		css: string,
+		page: PageConfig,
+		previewChrome: boolean,
+		isCancelled?: () => boolean,
+	): Promise<PaginateResult> {
+		// Hoisted out of the loop: it parses the document and inlines fonts, and it is the same
+		// answer every attempt — the maths does not change when the flow is laid out smaller.
+		const mathCss = await mathJaxCss(html);
+		const layOut = async (scale: number): Promise<PaginateResult> => {
+			await this.runPagination(
+				webview,
+				paginateScript(html, css + contentScaleCss(scale), previewChrome, mathCss),
+				isCancelled,
+			);
+			return await this.readPageMap(webview);
+		};
+
+		let map = await layOut(1);
+		const target = page.fitToPage === true ? clampPagesTall(page.fitPagesTall) : 0;
+		if (target === 0) return map;
+
+		let scale = 1;
+		for (let attempt = 0; attempt < MAX_FIT_ATTEMPTS; attempt++) {
+			const next = nextContentScale(scale, map.pageCount, target);
+			if (next === null) break;
+			scale = next;
+			map = await layOut(scale);
+		}
+		if (map.pageCount > target) {
+			console.warn(
+				'[multi-exporter] fit to %d page(s) was not reached: %d pages at content scale %s. ' +
+					'Something in the document will not lay out any smaller.',
+				target,
+				map.pageCount,
+				scale,
+			);
+		}
+		return map;
 	}
 
 	/**
@@ -406,7 +479,7 @@ export class PagedJsWebviewBackend implements ExportBackend {
 	private async resolveScale(webview: PreviewWebview, page: PageConfig): Promise<number> {
 		if (page.fitToPage !== true) return clampScale(page.printScale / 100);
 		try {
-			const measured = await webview.run<number>(fitScaleScript(page.fitAxis));
+			const measured = await webview.run<number>(fitScaleScript(page.fitAxis, clampPagesWide(page.fitPagesWide)));
 			return clampScale(measured);
 		} catch (error) {
 			console.debug('[multi-exporter] fit-to-page measurement unavailable; printing unscaled', error);

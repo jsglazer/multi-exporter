@@ -4539,6 +4539,8 @@ function defaultPage() {
     pageNumbering: "per-note",
     fitToPage: false,
     fitAxis: "both",
+    fitPagesWide: 1,
+    fitPagesTall: 0,
     printScale: 100,
     orphans: 2,
     widows: 2
@@ -4929,7 +4931,8 @@ function getPluginStringSetting(app, pluginId, key) {
 }
 var MD_ANNOTATION_STRIP_CLASSES = {
   unwrap: ["mdann-hl", "mdann-anchor"],
-  remove: ["mdann-marker", "mdann-gutter-host", "mdann-gutter-card", "mdann-gutter-leader", "mdann-gutter-tick"]
+  remove: ["mdann-marker", "mdann-gutter-host", "mdann-gutter-card", "mdann-gutter-leader", "mdann-gutter-tick"],
+  unclass: ["mdann-widget-hl"]
 };
 function getMdAnnotationCategoryColors(app, pluginId) {
   var _a, _b;
@@ -5359,7 +5362,13 @@ function planAnnotationStrip(root, classes) {
   };
   const remove = collect(classes.remove);
   const removeSet = new Set(remove);
-  return { unwrap: collect(classes.unwrap).filter((element) => !removeSet.has(element)), remove };
+  const unclass = [];
+  for (const className of classes.unclass) {
+    for (const element of toArray(root.querySelectorAll(`.${className}`))) {
+      if (!removeSet.has(element)) unclass.push({ element, className });
+    }
+  }
+  return { unwrap: collect(classes.unwrap).filter((element) => !removeSet.has(element)), remove, unclass };
 }
 function planAnnotations(root, mode, records, skipClasses = []) {
   if (mode === "off" || records.length === 0) {
@@ -39388,9 +39397,40 @@ function planPerNoteNumbering(documentStartPages, pageCount) {
   return stamps;
 }
 
+// src/core/fit-pages.ts
+var MAX_PAGES_WIDE = 10;
+var MAX_PAGES_TALL = 200;
+var MIN_CONTENT_SCALE = 0.4;
+var MAX_FIT_ATTEMPTS = 4;
+function clampPagesWide(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 1;
+  return Math.min(MAX_PAGES_WIDE, Math.max(1, Math.round(value)));
+}
+function clampPagesTall(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.min(MAX_PAGES_TALL, Math.max(0, Math.round(value)));
+}
+function nextContentScale(current, pageCount, target) {
+  if (target <= 0 || pageCount <= target || pageCount <= 0) return null;
+  const ideal = current * Math.sqrt(target / pageCount) * 0.97;
+  const next = Math.max(MIN_CONTENT_SCALE, Math.round(ideal * 1e3) / 1e3);
+  if (next >= current - 5e-3) return null;
+  return next;
+}
+function contentScaleCss(scale2) {
+  if (!Number.isFinite(scale2) || scale2 >= 1) return "";
+  const bounded = Math.max(MIN_CONTENT_SCALE, scale2);
+  return `
+/* Fit to page count: lay the flow out smaller so more of it fits on each page. */
+.pagedjs_page_content > div { zoom: ${bounded}; }
+`;
+}
+
 // src/shell/fit-scale.ts
-function fitScaleScript(axis) {
-  const ratios = axis === "width" ? "rect.width / width" : axis === "height" ? "rect.height / height" : "rect.width / width, rect.height / height";
+function fitScaleScript(axis, pagesWide = 1) {
+  const allowed = clampPagesWide(pagesWide);
+  const widthRatio = allowed === 1 ? "rect.width / width" : `rect.width / (width * ${allowed})`;
+  const ratios = axis === "width" ? widthRatio : axis === "height" ? "rect.height / height" : `${widthRatio}, rect.height / height`;
   return `(() => {
 	const box = document.querySelector('.pagedjs_page_content');
 	if (!box) return 1;
@@ -39534,8 +39574,7 @@ var PagedJsWebviewBackend = class {
     return await this.withGuestRecovery("the preview", async () => {
       const webview = this.container();
       await this.ensurePolyfill(webview);
-      await this.runPagination(webview, paginateScript(request.html, request.css, true, await mathJaxCss(request.html)));
-      const map = await this.readPageMap(webview);
+      const map = await this.paginateToTarget(webview, request.html, request.css, request.page, true);
       await this.applyNumbering(webview, request.page.pageNumbering, map.pageCount);
       await this.reportOverflow(webview);
       await webview.run(FIT_PREVIEW_SCRIPT);
@@ -39593,9 +39632,15 @@ var PagedJsWebviewBackend = class {
     await this.ensurePolyfill(webview);
     const html = wrapDocumentSections(request.documents);
     (_a = request.onProgress) == null ? void 0 : _a.call(request, 0.1, "Paginating");
-    await this.runPagination(webview, paginateScript(html, request.css, false, await mathJaxCss(html)), request.isCancelled);
+    const map = await this.paginateToTarget(
+      webview,
+      html,
+      request.css,
+      request.profile.page,
+      false,
+      request.isCancelled
+    );
     if (cancelled()) throw new ExportCancelled();
-    const map = await this.readPageMap(webview);
     const documentStartPages = await webview.run(DOCUMENT_START_PAGES_SCRIPT);
     await this.applyNumbering(webview, request.profile.page.pageNumbering, map.pageCount, documentStartPages);
     if (cancelled()) throw new ExportCancelled();
@@ -39614,6 +39659,54 @@ var PagedJsWebviewBackend = class {
     if (cancelled()) throw new ExportCancelled();
     (_c = request.onProgress) == null ? void 0 : _c.call(request, 0.85, "Building outline");
     return { pdf, pageCount: map.pageCount, headings: map.headings, documentStartPages };
+  }
+  /**
+   * Paginate, and keep paginating until the document fits the page target.
+   *
+   * With no target — the ordinary case, and every case before this existed — it is one
+   * pagination and one page map, exactly as it was. With one, it is a bounded search: the
+   * page count is a fact about the laid-out document and cannot be predicted from the
+   * source, so the only way to hit a number of pages is to lay it out, count, lay it out
+   * smaller, and count again. `core/fit-pages.ts` owns the arithmetic and the bounds; this
+   * owns the guest.
+   *
+   * The preview runs the identical loop, because the preview is the output. A preview that
+   * skipped it would show the eleven pages the export is about to turn into eight.
+   *
+   * A target that cannot be met inside the scale floor is reported to the console and the
+   * export finishes at the floor: a readable document of the wrong length beats an
+   * unreadable one of the right length, and failing the export outright over a page count
+   * would be worse than either.
+   */
+  async paginateToTarget(webview, html, css, page, previewChrome, isCancelled) {
+    const mathCss = await mathJaxCss(html);
+    const layOut = async (scale3) => {
+      await this.runPagination(
+        webview,
+        paginateScript(html, css + contentScaleCss(scale3), previewChrome, mathCss),
+        isCancelled
+      );
+      return await this.readPageMap(webview);
+    };
+    let map = await layOut(1);
+    const target = page.fitToPage === true ? clampPagesTall(page.fitPagesTall) : 0;
+    if (target === 0) return map;
+    let scale2 = 1;
+    for (let attempt = 0; attempt < MAX_FIT_ATTEMPTS; attempt++) {
+      const next = nextContentScale(scale2, map.pageCount, target);
+      if (next === null) break;
+      scale2 = next;
+      map = await layOut(scale2);
+    }
+    if (map.pageCount > target) {
+      console.warn(
+        "[multi-exporter] fit to %d page(s) was not reached: %d pages at content scale %s. Something in the document will not lay out any smaller.",
+        target,
+        map.pageCount,
+        scale2
+      );
+    }
+    return map;
   }
   /**
    * Paginate, watching it.
@@ -39758,7 +39851,7 @@ var PagedJsWebviewBackend = class {
   async resolveScale(webview, page) {
     if (page.fitToPage !== true) return clampScale(page.printScale / 100);
     try {
-      const measured = await webview.run(fitScaleScript(page.fitAxis));
+      const measured = await webview.run(fitScaleScript(page.fitAxis, clampPagesWide(page.fitPagesWide)));
       return clampScale(measured);
     } catch (error2) {
       console.debug("[multi-exporter] fit-to-page measurement unavailable; printing unscaled", error2);
@@ -55678,6 +55771,9 @@ var DomTransforms = class {
    */
   stripPluginAnnotations(note, plan) {
     for (const element of plan.remove) element.detach();
+    for (const { element, className } of plan.unclass) {
+      element.removeClass(className);
+    }
     for (const element of plan.unwrap) {
       const span = element;
       const parent = span.parentNode;
@@ -56117,8 +56213,29 @@ var ExportModal = class extends import_obsidian5.Modal {
      * "this one note wants to be smaller" is a per-export thought, not a per-profile one.
      */
     this.zoom = null;
+    /**
+     * Per-export annotation mode, on the same terms as `orientation` and `fit` above.
+     *
+     * The profile flag stays authoritative when this is `'profile'`, which is the point:
+     * nothing about `md-annotation`'s sidebar toggles reaches the PDF, and never will. What
+     * this adds is the missing *deliberate* override — only the Manuscript profile ships
+     * annotations on, so exporting an annotated note with any other profile silently drew
+     * nothing, and the only way to change that was to edit the profile.
+     */
+    this.annotations = "profile";
+    /**
+     * Per-export page targets. `null` means "whatever the profile says".
+     *
+     * `pagesWide` widens the fit's tolerance; `pagesTall` is a page-count target that
+     * re-paginates. Both are only consulted when fit-to-page will actually run — see
+     * `core/fit-pages.ts` for why they are two different mechanisms.
+     */
+    this.pagesWide = null;
+    this.pagesTall = null;
     /** Held so the fit and profile dropdowns can grey it out and re-seat it. */
     this.zoomSlider = null;
+    /** Held for the same reason: the page inputs are dead while fit-to-page is off. */
+    this.pageInputs = [];
     /**
      * The pagination currently in flight, plus whether another was asked for while it ran.
      *
@@ -56153,7 +56270,7 @@ var ExportModal = class extends import_obsidian5.Modal {
         if (next === void 0) return;
         this.profile = next;
         if (this.zoom === null) (_a = this.zoomSlider) == null ? void 0 : _a.setValue(clampZoom(next.page.printScale));
-        this.syncZoomEnabled();
+        this.syncFitControls();
         void this.repaginate();
       });
     });
@@ -56176,7 +56293,21 @@ var ExportModal = class extends import_obsidian5.Modal {
       dropdown.setValue(this.fit);
       dropdown.onChange((value) => {
         this.fit = isFitOverride(value) ? value : "profile";
-        this.syncZoomEnabled();
+        this.syncFitControls();
+        if (this.pagesTallTarget() > 0 || this.fit === "off") void this.repaginate();
+      });
+    });
+    new import_obsidian5.Setting(controls).setName("Pages wide").setDesc("Page-widths of content the width fit allows before it shrinks anything. Blank follows the profile.").addText((text) => {
+      this.pageInputs.push(text);
+      text.setPlaceholder(String(clampPagesWide(this.profile.page.fitPagesWide))).onChange((value) => {
+        this.pagesWide = value.trim() === "" ? null : clampPagesWide(Number(value));
+      });
+    });
+    new import_obsidian5.Setting(controls).setName("Pages tall").setDesc("Fit the note into this many pages by laying it out smaller. Blank or zero means no target.").addText((text) => {
+      this.pageInputs.push(text);
+      text.setPlaceholder(String(clampPagesTall(this.profile.page.fitPagesTall))).onChange((value) => {
+        this.pagesTall = value.trim() === "" ? null : clampPagesTall(Number(value));
+        void this.repaginate();
       });
     });
     new import_obsidian5.Setting(controls).setName("Zoom").setDesc("Scales the whole PDF, where 100 is unscaled. Fit to page overrides it when on.").addSlider((slider) => {
@@ -56185,7 +56316,18 @@ var ExportModal = class extends import_obsidian5.Modal {
         this.zoom = value;
       });
     });
-    this.syncZoomEnabled();
+    new import_obsidian5.Setting(controls).setName("Annotations").setDesc("Where md-annotation comments go in this PDF. The sidebar never decides this.").addDropdown((dropdown) => {
+      dropdown.addOption("profile", "Profile default");
+      dropdown.addOption("off", "Off");
+      dropdown.addOption("gutter", "Margin cards");
+      dropdown.addOption("endnotes", "Endnotes");
+      dropdown.setValue(this.annotations);
+      dropdown.onChange((value) => {
+        this.annotations = isAnnotationOverride(value) ? value : "profile";
+        void this.repaginate();
+      });
+    });
+    this.syncFitControls();
     new import_obsidian5.Setting(controls).setName("File name").setDesc("Name for the PDF. Leave it as the note name, or type another. `.pdf` is added for you.").addText(
       (text) => text.setPlaceholder(this.file.basename).setValue(this.fileName).onChange((value) => {
         this.fileName = value;
@@ -56239,7 +56381,9 @@ var ExportModal = class extends import_obsidian5.Modal {
    * tab, and a per-export choice that quietly rewrote it would outlive the modal.
    */
   effectiveProfile() {
-    if (this.orientation === "profile" && this.fit === "profile" && this.zoom === null) return this.profile;
+    if (this.orientation === "profile" && this.fit === "profile" && this.zoom === null && this.annotations === "profile" && this.pagesWide === null && this.pagesTall === null) {
+      return this.profile;
+    }
     const copy = structuredCloneProfile(this.profile);
     if (this.orientation !== "profile") copy.page.orientation = this.orientation;
     if (this.fit === "off") {
@@ -56248,23 +56392,36 @@ var ExportModal = class extends import_obsidian5.Modal {
       copy.page.fitToPage = true;
       copy.page.fitAxis = this.fit;
     }
+    if (this.pagesWide !== null) copy.page.fitPagesWide = this.pagesWide;
+    if (this.pagesTall !== null) copy.page.fitPagesTall = this.pagesTall;
     if (this.zoom !== null) copy.page.printScale = this.zoom;
+    if (this.annotations !== "profile") copy.flags.annotationMode = this.annotations;
     return copy;
   }
   /** Whether fit-to-page will run for this export, profile default included. */
   fitsToPage() {
     return this.fit === "profile" ? this.profile.page.fitToPage === true : this.fit !== "off";
   }
+  /** The page-count target this export will actually use, profile default included. */
+  pagesTallTarget() {
+    var _a;
+    if (!this.fitsToPage()) return 0;
+    return clampPagesTall((_a = this.pagesTall) != null ? _a : this.profile.page.fitPagesTall);
+  }
   /**
-   * Grey the zoom slider out while fit-to-page will decide the scale instead.
+   * Grey out the controls fit-to-page has taken over, or that it has switched off.
    *
    * A control that silently does nothing is worse than one that is visibly unavailable: the
    * fit measurement *replaces* the print scale, it does not compose with it, and a zoom that
-   * looked live but changed nothing about the PDF would read as a bug.
+   * looked live but changed nothing about the PDF would read as a bug. The two page inputs
+   * are the mirror image — they are read only while fitting is on, so they go dead when it
+   * is off.
    */
-  syncZoomEnabled() {
+  syncFitControls() {
     var _a;
-    (_a = this.zoomSlider) == null ? void 0 : _a.setDisabled(this.fitsToPage());
+    const fitting = this.fitsToPage();
+    (_a = this.zoomSlider) == null ? void 0 : _a.setDisabled(fitting);
+    for (const input of this.pageInputs) input.setDisabled(!fitting);
   }
   async paginateOnce() {
     const backend = this.backend;
@@ -56355,6 +56512,9 @@ var ExportModal = class extends import_obsidian5.Modal {
 };
 function describeError(error2) {
   return error2 instanceof Error ? error2.message : String(error2);
+}
+function isAnnotationOverride(value) {
+  return value === "profile" || value === "off" || value === "gutter" || value === "endnotes";
 }
 function isFitOverride(value) {
   return value === "profile" || value === "off" || value === "width" || value === "height" || value === "both";
@@ -56776,6 +56936,22 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
           await this.save();
         });
       });
+      new import_obsidian8.Setting(editor).setName("Pages wide").setDesc(
+        "How many page-widths of content to allow before the width fit shrinks anything. 1 keeps everything inside the text column; 2 lets a wide table run to twice it."
+      ).addText(
+        (text) => text.setPlaceholder("1").setValue(String(clampPagesWide(profile.page.fitPagesWide))).onChange(async (value) => {
+          profile.page.fitPagesWide = clampPagesWide(Number(value));
+          await this.save();
+        })
+      );
+      new import_obsidian8.Setting(editor).setName("Pages tall").setDesc(
+        "Fit the whole document into this many pages by laying it out smaller and paginating again. 0 is no target. Costs an extra pagination or two per export."
+      ).addText(
+        (text) => text.setPlaceholder("0").setValue(String(clampPagesTall(profile.page.fitPagesTall))).onChange(async (value) => {
+          profile.page.fitPagesTall = clampPagesTall(Number(value));
+          await this.save();
+        })
+      );
     } else {
       new import_obsidian8.Setting(editor).setName("Print scale").setDesc("Percentage the finished pages are printed at, where 100 is unscaled.").addSlider(
         (slider) => slider.setLimits(40, 200, 5).setValue(clampPercent(profile.page.printScale)).setDynamicTooltip().onChange(async (value) => {

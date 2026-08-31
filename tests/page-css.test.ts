@@ -30,6 +30,8 @@ function config(overrides: Partial<PageConfig> = {}): PageConfig {
 		pageNumbering: 'continuous',
 		fitToPage: false,
 		fitAxis: 'both',
+		fitPagesWide: 1,
+		fitPagesTall: 0,
 		printScale: 100,
 		orphans: 2,
 		widows: 2,

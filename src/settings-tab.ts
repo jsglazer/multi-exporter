@@ -1,5 +1,6 @@
 import { PluginSettingTab, Setting } from 'obsidian';
 import type { App } from 'obsidian';
+import { clampPagesTall, clampPagesWide } from './core/fit-pages';
 import { PAGE_SIZES } from './core/page-css';
 import { clearFolderProfile, mappingsUnder, pruneFolderProfiles } from './core/profile-resolver';
 import { createDefaultProfiles, duplicateProfile, makeProfileId, structuredCloneProfile } from './core/profiles';
@@ -295,6 +296,41 @@ export class MultiExporterSettingTab extends PluginSettingTab {
 						await this.save();
 					});
 				});
+
+			// Two numbers, two quite different mechanisms — see `core/fit-pages.ts`. The
+			// descriptions say which is which, because a pair of adjacent "pages" inputs that
+			// behaved the same way is exactly what a reader would assume.
+			new Setting(editor)
+				.setName('Pages wide')
+				.setDesc(
+					'How many page-widths of content to allow before the width fit shrinks anything. ' +
+						'1 keeps everything inside the text column; 2 lets a wide table run to twice it.',
+				)
+				.addText((text) =>
+					text
+						.setPlaceholder('1')
+						.setValue(String(clampPagesWide(profile.page.fitPagesWide)))
+						.onChange(async (value) => {
+							profile.page.fitPagesWide = clampPagesWide(Number(value));
+							await this.save();
+						}),
+				);
+
+			new Setting(editor)
+				.setName('Pages tall')
+				.setDesc(
+					'Fit the whole document into this many pages by laying it out smaller and paginating ' +
+						'again. 0 is no target. Costs an extra pagination or two per export.',
+				)
+				.addText((text) =>
+					text
+						.setPlaceholder('0')
+						.setValue(String(clampPagesTall(profile.page.fitPagesTall)))
+						.onChange(async (value) => {
+							profile.page.fitPagesTall = clampPagesTall(Number(value));
+							await this.save();
+						}),
+				);
 		} else {
 			new Setting(editor)
 				.setName('Print scale')
