@@ -43,7 +43,8 @@ export const BASE_DOCUMENT_CSS = `/* multi-exporter base — normalisation, over
 html, body { margin: 0; padding: 0; }
 img, svg, video, canvas, iframe { max-width: 100%; height: auto; }
 pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
-table { max-width: 100%; }
+table { max-width: 100%; border-collapse: collapse; }
+table, th, td { border: 1px solid currentColor; }
 mjx-container { max-width: 100%; }
 mjx-container svg { max-width: 100%; height: auto; }
 .mermaid svg, .block-language-mermaid svg { max-width: 100%; height: auto; }

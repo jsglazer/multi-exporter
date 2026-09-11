@@ -42,6 +42,8 @@ export interface RenderedNote {
 	 * tree — `querySelectorAll` alone cannot tell you what order two pieces of text are in.
 	 */
 	root: RootLike & NodeLike;
+	/** The note's own `cssclasses` frontmatter, so a profile stylesheet can target it like Obsidian's reading view does. */
+	cssClasses?: readonly string[];
 }
 
 /** Renders a vault note into DOM using Obsidian's own renderer. Shell-side. */
@@ -345,7 +347,12 @@ export async function prepareDocument(
 
 		await applyAnnotations(rendered, note, deps, report);
 
-		return { sourcePath: note.sourcePath, title: note.title, html: deps.transforms.serialize(rendered) };
+		return {
+			sourcePath: note.sourcePath,
+			title: note.title,
+			html: deps.transforms.serialize(rendered),
+			...(rendered.cssClasses === undefined ? {} : { cssClasses: rendered.cssClasses }),
+		};
 	} finally {
 		deps.renderer.release(rendered);
 	}

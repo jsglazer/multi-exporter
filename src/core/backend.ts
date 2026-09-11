@@ -30,6 +30,8 @@ export interface RenderedDocument {
 	sourcePath: string;
 	title: string;
 	html: string;
+	/** The note's own `cssclasses` frontmatter, carried onto its `.mx-document` wrapper. */
+	cssClasses?: readonly string[];
 }
 
 export interface ExportRequest {

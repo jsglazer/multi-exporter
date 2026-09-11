@@ -557,6 +557,20 @@ export class MultiExporterSettingTab extends PluginSettingTab {
 	}
 
 	private renderGeneral(containerEl: HTMLElement): void {
+		new Setting(containerEl).setName('Export').setHeading();
+		new Setting(containerEl)
+			.setName('Open PDF after export')
+			.setDesc(
+				"Opens the finished PDF with your system's default viewer once export completes. Only when export " +
+					'produces a single file — a separate bulk export writing many PDFs is left alone.',
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(this.settings.openPdfAfterExport).onChange(async (value) => {
+					this.settings.openPdfAfterExport = value;
+					await this.save();
+				}),
+			);
+
 		new Setting(containerEl).setName('Images').setHeading();
 		new Setting(containerEl)
 			.setName('Image fetch timeout')

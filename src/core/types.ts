@@ -175,6 +175,8 @@ export interface PluginSettings {
 	lastExportDir: string;
 	/** Timeout for a single remote image fetch, in milliseconds. */
 	imageFetchTimeoutMs: number;
+	/** Open a finished export's PDF with the system default app, when it wrote exactly one file. */
+	openPdfAfterExport: boolean;
 }
 
 export type BulkExportMode = 'separate' | 'merged';

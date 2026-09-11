@@ -82,16 +82,21 @@ class FakeRenderer implements DocumentRenderer {
 	readonly rendered: string[] = [];
 	readonly released: string[] = [];
 
-	constructor(private readonly trees: Record<string, () => MockElement>) {}
+	constructor(
+		private readonly trees: Record<string, () => MockElement>,
+		private readonly cssClasses: Record<string, string[]> = {},
+	) {}
 
 	render(sourcePath: string): Promise<RenderedNote> {
 		this.rendered.push(sourcePath);
 		const build = this.trees[sourcePath];
 		if (build === undefined) throw new Error(`No fixture for ${sourcePath}`);
+		const classes = this.cssClasses[sourcePath];
 		return Promise.resolve({
 			sourcePath,
 			title: sourcePath.replace(/\.md$/, '').split('/').pop() ?? sourcePath,
 			root: build(),
+			...(classes === undefined ? {} : { cssClasses: classes }),
 		});
 	}
 
@@ -204,11 +209,12 @@ function harness(
 	trees: Record<string, () => MockElement>,
 	overrides: Partial<PipelineDeps> = {},
 	compressor = new FakeCompressor(false),
+	cssClasses: Record<string, string[]> = {},
 ): Harness {
 	const writer = new InMemoryFileWriter();
 	const backend = new FakeBackend();
 	const transforms = new RecordingTransforms();
-	const renderer = new FakeRenderer(trees);
+	const renderer = new FakeRenderer(trees, cssClasses);
 	const outline = new RecordingOutlineInjector();
 	const report = new ExportReport();
 
@@ -291,6 +297,15 @@ describe('separate export, end to end', () => {
 		await runExport(plan(), article, second.deps, second.report);
 		expect(first.writer.paths).toEqual(second.writer.paths);
 		expect(first.writer.files.get('/out/One.pdf')).toEqual(second.writer.files.get('/out/One.pdf'));
+	});
+
+	it("carries a note's cssclasses frontmatter through to the document the backend receives", async () => {
+		const h = harness(trees, {}, undefined, { 'Research/One.md': ['wide', 'no-toc'] });
+		await runExport(plan(), article, h.deps, h.report);
+
+		const documents = h.backend.exportCalls.map((call) => call.documents[0]);
+		expect(documents[0]?.cssClasses).toEqual(['wide', 'no-toc']);
+		expect(documents[1]?.cssClasses).toBeUndefined();
 	});
 });
 

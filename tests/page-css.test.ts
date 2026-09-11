@@ -120,6 +120,13 @@ describe('buildPageCss', () => {
 	});
 });
 
+describe('BASE_DOCUMENT_CSS', () => {
+	it('gives every table a visible border, since no theme CSS reaches the export', () => {
+		expect(BASE_DOCUMENT_CSS).toContain('border-collapse: collapse');
+		expect(BASE_DOCUMENT_CSS).toContain('table, th, td { border: 1px solid currentColor; }');
+	});
+});
+
 describe('cssString', () => {
 	it('quotes and escapes', () => {
 		expect(cssString('He said "hi"')).toBe('"He said \\"hi\\""');

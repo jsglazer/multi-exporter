@@ -5,7 +5,7 @@ import { isExportableNote, planMergedExport, planSeparateExport } from '../core/
 import type { ExportPlan } from '../core/export-plan';
 import { sanitizeFileName } from '../core/paths';
 import type { BulkExportMode, PluginSettings, Profile } from '../core/types';
-import { announceOutcome, ExportService } from './export-service';
+import { announceOutcome, ExportService, maybeOpenExport } from './export-service';
 import { describeError } from './export-modal';
 
 /**
@@ -160,6 +160,7 @@ export class FolderExportModal extends Modal {
 			});
 			for (const line of outcome.report.toLines()) this.log(line);
 			announceOutcome(outcome);
+			void maybeOpenExport(outcome, this.settings);
 		} catch (error) {
 			new Notice(`Export failed: ${describeError(error)}`);
 			this.log(`Failed: ${describeError(error)}`);

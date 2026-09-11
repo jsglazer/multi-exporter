@@ -357,6 +357,7 @@ export function createDefaultSettings(): PluginSettings {
 		folderProfiles: {},
 		lastExportDir: '',
 		imageFetchTimeoutMs: 10000,
+		openPdfAfterExport: true,
 	};
 }
 
@@ -443,6 +444,8 @@ export function normalizeSettings(loaded: unknown): PluginSettings {
 			typeof raw.imageFetchTimeoutMs === 'number' && raw.imageFetchTimeoutMs > 0
 				? raw.imageFetchTimeoutMs
 				: defaults.imageFetchTimeoutMs,
+		openPdfAfterExport:
+			typeof raw.openPdfAfterExport === 'boolean' ? raw.openPdfAfterExport : defaults.openPdfAfterExport,
 	};
 }
 

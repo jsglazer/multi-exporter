@@ -222,6 +222,51 @@ export async function showDirectoryDialog(title: string, defaultPath: string): P
 	return result.canceled ? null : (result.filePaths[0] ?? null);
 }
 
+/* --------------------------------------------------------------------- open exports -- */
+
+interface ElectronShell {
+	/** Resolves to an error string on failure — Electron does not reject this call. */
+	openPath(path: string): Promise<string>;
+}
+
+interface ElectronShellBridge {
+	remote?: { shell?: ElectronShell };
+	shell?: ElectronShell;
+}
+
+/** Raised when Electron's shell bridge cannot be reached; never raised for a bad path. */
+export class ShellUnavailableError extends Error {
+	constructor() {
+		super("Electron's shell module could not be reached, so the exported file could not be opened.");
+		this.name = 'ShellUnavailableError';
+	}
+}
+
+function shellBridge(): ElectronShell {
+	for (const moduleId of ['electron', '@electron/remote']) {
+		try {
+			// eslint-disable-next-line @typescript-eslint/no-require-imports
+			const module = require(moduleId) as ElectronShellBridge;
+			const shell = module.remote?.shell ?? module.shell;
+			if (shell !== undefined) return shell;
+		} catch {
+			// Try the next spelling; only exhausting both is a failure.
+		}
+	}
+	throw new ShellUnavailableError();
+}
+
+/**
+ * Open a finished export with the system's default app for its file type.
+ *
+ * `shell.openPath` resolves to an error string rather than rejecting, so a bad path or a
+ * missing default app is turned into a thrown error here rather than silently doing nothing.
+ */
+export async function openExportedFile(path: string): Promise<void> {
+	const error = await shellBridge().openPath(path);
+	if (error !== '') throw new Error(error);
+}
+
 /* ------------------------------------------------------------------------- webview -- */
 
 /**
@@ -235,6 +280,7 @@ export interface WebviewTagLike {
 	src: string;
 	executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>;
 	printToPDF(options: PrintToPdfOptions): Promise<Uint8Array>;
+	print(options?: PrintOptions): void;
 	getWebContentsId(): number;
 	/** False once the guest page has finished loading; absent on a detached element. */
 	isLoading?(): boolean;
@@ -252,6 +298,13 @@ export interface PrintToPdfOptions {
 	margins: { marginType: 'default' | 'none' | 'printableArea' | 'custom' };
 	landscape?: boolean;
 	scale?: number;
+}
+
+/** Electron's `<webview>.print()` options — the OS print dialog, not a PDF file. */
+export interface PrintOptions {
+	printBackground?: boolean;
+	landscape?: boolean;
+	margins?: { marginType: 'default' | 'none' | 'printableArea' | 'custom' };
 }
 
 /**
@@ -373,6 +426,15 @@ export interface PreviewWebview {
 	run<T>(code: string): Promise<T>;
 	printToPdf(options: PrintToPdfOptions): Promise<Uint8Array>;
 	/**
+	 * Send the guest straight to the OS print dialog, as an alternative to `printToPdf`.
+	 *
+	 * Chromium ignores `media="screen"` styles while printing, so the preview's own chrome —
+	 * backdrop, page shadows, the fit-to-width transform, all scoped to `.mx-preview-mode`
+	 * under a `media="screen"` `<style>` — drops out on its own; nothing has to be toggled off
+	 * first, unlike `printToPdf`, which prints the guest exactly as it stands at all times.
+	 */
+	print(options?: PrintOptions): void;
+	/**
 	 * Move the container off-screen while keeping real geometry.
 	 *
 	 * **Never `display: none`.** A collapsed box has no layout, and paged.js computes page
@@ -472,6 +534,10 @@ export function createPreviewWebview(parent: HTMLElement, partition: string): Pr
 			if (destroyed) throw new Error('The preview webview has been destroyed.');
 			await ready();
 			return await unwrapped(() => retryWhileUnready(() => element.printToPDF(options), () => destroyed));
+		},
+		print(options?: PrintOptions): void {
+			if (destroyed) throw new Error('The preview webview has been destroyed.');
+			element.print(options);
 		},
 		setOffscreen(offscreen: boolean): void {
 			element.toggleClass(PREVIEW_OFFSCREEN_CLASS, offscreen);

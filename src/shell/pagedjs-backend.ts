@@ -84,6 +84,8 @@ export class PagedJsWebviewBackend implements ExportBackend {
 
 	private webview: PreviewWebview | null = null;
 	private disposed = false;
+	/** The page config the container was last paginated against, for `printPreview`'s orientation. */
+	private lastPage: PageConfig | null = null;
 
 	constructor(private readonly host: HTMLElement) {}
 
@@ -118,6 +120,7 @@ export class PagedJsWebviewBackend implements ExportBackend {
 	}
 
 	async paginate(request: PaginateRequest): Promise<PaginateResult> {
+		this.lastPage = request.page;
 		return await this.withGuestRecovery('the preview', async () => {
 			const webview = this.container();
 			await this.ensurePolyfill(webview);
@@ -181,6 +184,22 @@ export class PagedJsWebviewBackend implements ExportBackend {
 
 	async export(request: ExportRequest): Promise<ExportResult> {
 		return await this.withGuestRecovery('the export', () => this.exportOnce(request));
+	}
+
+	/**
+	 * Send the already-paginated preview to the OS print dialog, instead of writing a PDF file.
+	 *
+	 * Reuses the same container `export()` prints — there is no second render path, for the
+	 * same reason `export()` never recreates it: the preview is the output. Only callable once
+	 * something has actually been paginated into it.
+	 */
+	printPreview(): void {
+		if (this.webview === null) throw new Error('Nothing has been paginated yet — refresh the preview first.');
+		this.webview.print({
+			printBackground: true,
+			landscape: this.lastPage?.orientation === 'landscape',
+			margins: { marginType: 'none' },
+		});
 	}
 
 	private async exportOnce(request: ExportRequest): Promise<ExportResult> {
@@ -966,7 +985,9 @@ function describeStuckHandlers(hooks: Record<string, string> | null): string {
  * actually lays out onto a page, and a collapsed element is never laid out.
  *
  * The first section carries an extra class, so a profile stylesheet can exempt the opening
- * note from a rule meant for the ones that follow.
+ * note from a rule meant for the ones that follow. A note's own `cssclasses` frontmatter is
+ * appended the same way Obsidian puts it on `.markdown-preview-view`, so a profile stylesheet
+ * can target it too.
  */
 export function wrapDocumentSections(
 	documents: readonly RenderedDocument[],
@@ -976,13 +997,17 @@ export function wrapDocumentSections(
 	return documents
 		.map((document, index) => {
 			const first = index === 0 ? ' mx-document-first' : '';
+			const extra =
+				document.cssClasses === undefined || document.cssClasses.length === 0
+					? ''
+					: ` ${document.cssClasses.join(' ')}`;
 			const meta =
 				`<div class="mx-doc-meta" aria-hidden="true">` +
 				`<span class="mx-doc-title">${escapeText(document.title)}</span>` +
 				`<span class="mx-doc-date">${escapeText(stamp)}</span>` +
 				`</div>`;
 			return (
-				`<section class="mx-document${first}" data-mx-index="${index}"` +
+				`<section class="${escapeAttribute(`mx-document${first}${extra}`)}" data-mx-index="${index}"` +
 				` data-mx-source="${escapeAttribute(document.sourcePath)}"` +
 				` data-mx-title="${escapeAttribute(document.title)}">${meta}${document.html}</section>`
 			);

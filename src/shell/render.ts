@@ -43,7 +43,14 @@ export class ObsidianDocumentRenderer implements DocumentRenderer {
 		// two seconds: a plain note settles in one poll, and a slow one is still correct.
 		await waitForDomStability(container);
 
-		const note: RenderedNote = { sourcePath, title: file.basename, root: container };
+		const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+		const cssClasses = normalizeCssClasses(frontmatter?.['cssclasses'] ?? frontmatter?.['cssclass']);
+		const note: RenderedNote = {
+			sourcePath,
+			title: file.basename,
+			root: container,
+			...(cssClasses.length === 0 ? {} : { cssClasses }),
+		};
 		this.components.set(note, component);
 		return note;
 	}
@@ -89,6 +96,22 @@ export async function waitForDomStability(
 			previous = current;
 		}
 	}
+}
+
+/**
+ * `cssclasses` frontmatter, however the user wrote it: a single string, a list of strings, or
+ * a string with more than one class in it — Obsidian's own reading view accepts all three.
+ */
+function normalizeCssClasses(value: unknown): string[] {
+	const entries = Array.isArray(value) ? value : typeof value === 'string' ? [value] : [];
+	const classes: string[] = [];
+	for (const entry of entries) {
+		if (typeof entry !== 'string') continue;
+		for (const token of entry.split(/\s+/)) {
+			if (token !== '') classes.push(token);
+		}
+	}
+	return classes;
 }
 
 function signature(element: HTMLElement): string {

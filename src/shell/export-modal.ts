@@ -7,7 +7,7 @@ import { resolveProfileForPath } from '../core/profile-resolver';
 import { structuredCloneProfile } from '../core/profiles';
 import { clampPagesTall, clampPagesWide } from '../core/fit-pages';
 import type { AnnotationMode, PluginSettings, Profile } from '../core/types';
-import { announceOutcome, ExportService } from './export-service';
+import { announceOutcome, ExportService, maybeOpenExport } from './export-service';
 import { PagedJsWebviewBackend, wrapDocumentSections } from './pagedjs-backend';
 
 /**
@@ -246,6 +246,11 @@ export class ExportModal extends Modal {
 				}),
 			)
 			.addButton((button) =>
+				button.setButtonText('Print…').onClick(() => {
+					this.print();
+				}),
+			)
+			.addButton((button) =>
 				button
 					.setButtonText('Export PDF')
 					.setCta()
@@ -319,6 +324,16 @@ export class ExportModal extends Modal {
 		if (this.zoom !== null) copy.page.printScale = this.zoom;
 		if (this.annotations !== 'profile') copy.flags.annotationMode = this.annotations;
 		return copy;
+	}
+
+	/** Send the preview straight to the OS print dialog, instead of writing a PDF file first. */
+	private print(): void {
+		if (this.backend === null) return;
+		try {
+			this.backend.printPreview();
+		} catch (error) {
+			this.fail(error);
+		}
 	}
 
 	/** Whether fit-to-page will run for this export, profile default included. */
@@ -418,6 +433,7 @@ export class ExportModal extends Modal {
 				...(this.backend === null ? {} : { backend: this.backend }),
 			});
 			announceOutcome(outcome);
+			void maybeOpenExport(outcome, this.settings);
 			this.settings.lastExportDir = outputDir;
 			void this.service.saveSettings();
 

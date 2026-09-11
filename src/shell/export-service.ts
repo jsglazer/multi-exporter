@@ -1,6 +1,6 @@
 import { Notice } from 'obsidian';
 import type { App } from 'obsidian';
-import { MD_ANNOTATION_STRIP_CLASSES } from '../adapter/obsidian-internals';
+import { MD_ANNOTATION_STRIP_CLASSES, openExportedFile } from '../adapter/obsidian-internals';
 import type { RenderedDocument } from '../core/backend';
 import type { ExportPlan } from '../core/export-plan';
 import { prepareDocument, runExport } from '../core/pipeline';
@@ -196,4 +196,23 @@ export function announceOutcome(outcome: PipelineOutcome): void {
 			? `Nothing was exported${suffix}.`
 			: `Exported ${files} file${files === 1 ? '' : 's'}, ${outcome.pageCount} page${outcome.pageCount === 1 ? '' : 's'}${suffix}.`,
 	);
+}
+
+/**
+ * Open the export's one output file with the system default app, when the setting asks for it.
+ *
+ * Only when exactly one file was written: a separate bulk export can write dozens of PDFs,
+ * and opening every one would launch dozens of viewer windows for a single click. Single-note
+ * and merged exports always write exactly one, so they are the cases this actually serves.
+ */
+export async function maybeOpenExport(outcome: PipelineOutcome, settings: PluginSettings): Promise<void> {
+	if (!settings.openPdfAfterExport || outcome.cancelled || outcome.written.length !== 1) return;
+	const [path] = outcome.written;
+	if (path === undefined) return;
+	try {
+		await openExportedFile(path);
+	} catch (error) {
+		console.error('[multi-exporter] could not open the exported file', path, error);
+		new Notice(`Could not open the exported PDF: ${error instanceof Error ? error.message : String(error)}`);
+	}
 }
