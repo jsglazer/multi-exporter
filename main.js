@@ -4385,7 +4385,8 @@ var BASE_DOCUMENT_CSS = `/* multi-exporter base \u2014 normalisation, overridden
 html, body { margin: 0; padding: 0; }
 img, svg, video, canvas, iframe { max-width: 100%; height: auto; }
 pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
-table { max-width: 100%; }
+table { max-width: 100%; border-collapse: collapse; }
+table, th, td { border: 1px solid currentColor; }
 mjx-container { max-width: 100%; }
 mjx-container svg { max-width: 100%; height: auto; }
 .mermaid svg, .block-language-mermaid svg { max-width: 100%; height: auto; }
@@ -4782,7 +4783,8 @@ function createDefaultSettings() {
     defaultProfileId: (_b = (_a = profiles[0]) == null ? void 0 : _a.id) != null ? _b : "article",
     folderProfiles: {},
     lastExportDir: "",
-    imageFetchTimeoutMs: 1e4
+    imageFetchTimeoutMs: 1e4,
+    openPdfAfterExport: true
   };
 }
 function makeProfileId(name, existing) {
@@ -4839,7 +4841,8 @@ function normalizeSettings(loaded) {
     defaultProfileId,
     folderProfiles,
     lastExportDir: typeof raw.lastExportDir === "string" ? raw.lastExportDir : "",
-    imageFetchTimeoutMs: typeof raw.imageFetchTimeoutMs === "number" && raw.imageFetchTimeoutMs > 0 ? raw.imageFetchTimeoutMs : defaults.imageFetchTimeoutMs
+    imageFetchTimeoutMs: typeof raw.imageFetchTimeoutMs === "number" && raw.imageFetchTimeoutMs > 0 ? raw.imageFetchTimeoutMs : defaults.imageFetchTimeoutMs,
+    openPdfAfterExport: typeof raw.openPdfAfterExport === "boolean" ? raw.openPdfAfterExport : defaults.openPdfAfterExport
   };
 }
 function normalizeProfile(raw) {
@@ -4999,6 +5002,28 @@ async function showDirectoryDialog(title, defaultPath) {
   });
   return result.canceled ? null : (_a = result.filePaths[0]) != null ? _a : null;
 }
+var ShellUnavailableError = class extends Error {
+  constructor() {
+    super("Electron's shell module could not be reached, so the exported file could not be opened.");
+    this.name = "ShellUnavailableError";
+  }
+};
+function shellBridge() {
+  var _a, _b;
+  for (const moduleId of ["electron", "@electron/remote"]) {
+    try {
+      const module2 = require(moduleId);
+      const shell = (_b = (_a = module2.remote) == null ? void 0 : _a.shell) != null ? _b : module2.shell;
+      if (shell !== void 0) return shell;
+    } catch (e) {
+    }
+  }
+  throw new ShellUnavailableError();
+}
+async function openExportedFile(path) {
+  const error2 = await shellBridge().openPath(path);
+  if (error2 !== "") throw new Error(error2);
+}
 async function retryWhileUnready(attempt, destroyed) {
   const deadline = Date.now() + READY_TIMEOUT_MS;
   for (; ; ) {
@@ -5085,6 +5110,10 @@ function createPreviewWebview(parent, partition) {
       if (destroyed) throw new Error("The preview webview has been destroyed.");
       await ready();
       return await unwrapped(() => retryWhileUnready(() => element.printToPDF(options), () => destroyed));
+    },
+    print(options) {
+      if (destroyed) throw new Error("The preview webview has been destroyed.");
+      element.print(options);
     },
     setOffscreen(offscreen) {
       element.toggleClass(PREVIEW_OFFSCREEN_CLASS, offscreen);
@@ -5853,7 +5882,12 @@ async function prepareDocument(note, citeKeySet, deps, report) {
       deps.transforms.applyImageSubstitutions(rendered, result.substitutions);
     }
     await applyAnnotations(rendered, note, deps, report);
-    return { sourcePath: note.sourcePath, title: note.title, html: deps.transforms.serialize(rendered) };
+    return {
+      sourcePath: note.sourcePath,
+      title: note.title,
+      html: deps.transforms.serialize(rendered),
+      ...rendered.cssClasses === void 0 ? {} : { cssClasses: rendered.cssClasses }
+    };
   } finally {
     deps.renderer.release(rendered);
   }
@@ -39539,6 +39573,8 @@ var PagedJsWebviewBackend = class {
     this.label = "paged.js (webview)";
     this.webview = null;
     this.disposed = false;
+    /** The page config the container was last paginated against, for `printPreview`'s orientation. */
+    this.lastPage = null;
   }
   /**
    * The single container, created once and reused for every note in a bulk export.
@@ -39571,6 +39607,7 @@ var PagedJsWebviewBackend = class {
     (_a = this.webview) == null ? void 0 : _a.setOffscreen(offscreen);
   }
   async paginate(request) {
+    this.lastPage = request.page;
     return await this.withGuestRecovery("the preview", async () => {
       const webview = this.container();
       await this.ensurePolyfill(webview);
@@ -39620,6 +39657,22 @@ var PagedJsWebviewBackend = class {
   }
   async export(request) {
     return await this.withGuestRecovery("the export", () => this.exportOnce(request));
+  }
+  /**
+   * Send the already-paginated preview to the OS print dialog, instead of writing a PDF file.
+   *
+   * Reuses the same container `export()` prints — there is no second render path, for the
+   * same reason `export()` never recreates it: the preview is the output. Only callable once
+   * something has actually been paginated into it.
+   */
+  printPreview() {
+    var _a;
+    if (this.webview === null) throw new Error("Nothing has been paginated yet \u2014 refresh the preview first.");
+    this.webview.print({
+      printBackground: true,
+      landscape: ((_a = this.lastPage) == null ? void 0 : _a.orientation) === "landscape",
+      margins: { marginType: "none" }
+    });
   }
   async exportOnce(request) {
     var _a, _b, _c;
@@ -40174,8 +40227,9 @@ function wrapDocumentSections(documents, options = {}) {
   const stamp = formatExportStamp((_a = options.exportedAt) != null ? _a : /* @__PURE__ */ new Date());
   return documents.map((document2, index) => {
     const first = index === 0 ? " mx-document-first" : "";
+    const extra = document2.cssClasses === void 0 || document2.cssClasses.length === 0 ? "" : ` ${document2.cssClasses.join(" ")}`;
     const meta = `<div class="mx-doc-meta" aria-hidden="true"><span class="mx-doc-title">${escapeText(document2.title)}</span><span class="mx-doc-date">${escapeText(stamp)}</span></div>`;
-    return `<section class="mx-document${first}" data-mx-index="${index}" data-mx-source="${escapeAttribute(document2.sourcePath)}" data-mx-title="${escapeAttribute(document2.title)}">${meta}${document2.html}</section>`;
+    return `<section class="${escapeAttribute(`mx-document${first}${extra}`)}" data-mx-index="${index}" data-mx-source="${escapeAttribute(document2.sourcePath)}" data-mx-title="${escapeAttribute(document2.title)}">${meta}${document2.html}</section>`;
   }).join("\n");
 }
 function formatExportStamp(when) {
@@ -55647,6 +55701,7 @@ var ObsidianDocumentRenderer = class {
     this.components = /* @__PURE__ */ new WeakMap();
   }
   async render(sourcePath) {
+    var _a, _b;
     const file = this.app.vault.getAbstractFileByPath(sourcePath);
     if (!(file instanceof import_obsidian2.TFile)) throw new Error(`Not a note: ${sourcePath}`);
     const markdown = await this.app.vault.cachedRead(file);
@@ -55655,7 +55710,14 @@ var ObsidianDocumentRenderer = class {
     component.load();
     await import_obsidian2.MarkdownRenderer.render(this.app, markdown, container, sourcePath, component);
     await waitForDomStability(container);
-    const note = { sourcePath, title: file.basename, root: container };
+    const frontmatter = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
+    const cssClasses = normalizeCssClasses((_b = frontmatter == null ? void 0 : frontmatter["cssclasses"]) != null ? _b : frontmatter == null ? void 0 : frontmatter["cssclass"]);
+    const note = {
+      sourcePath,
+      title: file.basename,
+      root: container,
+      ...cssClasses.length === 0 ? {} : { cssClasses }
+    };
     this.components.set(note, component);
     return note;
   }
@@ -55689,6 +55751,17 @@ async function waitForDomStability(element, options = {}) {
       previous = current;
     }
   }
+}
+function normalizeCssClasses(value) {
+  const entries = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+  const classes = [];
+  for (const entry of entries) {
+    if (typeof entry !== "string") continue;
+    for (const token of entry.split(/\s+/)) {
+      if (token !== "") classes.push(token);
+    }
+  }
+  return classes;
 }
 function signature(element) {
   return `${element.innerHTML.length}:${element.querySelectorAll("*").length}`;
@@ -56121,6 +56194,17 @@ function announceOutcome(outcome) {
     files === 0 ? `Nothing was exported${suffix}.` : `Exported ${files} file${files === 1 ? "" : "s"}, ${outcome.pageCount} page${outcome.pageCount === 1 ? "" : "s"}${suffix}.`
   );
 }
+async function maybeOpenExport(outcome, settings) {
+  if (!settings.openPdfAfterExport || outcome.cancelled || outcome.written.length !== 1) return;
+  const [path] = outcome.written;
+  if (path === void 0) return;
+  try {
+    await openExportedFile(path);
+  } catch (error2) {
+    console.error("[multi-exporter] could not open the exported file", path, error2);
+    new import_obsidian4.Notice(`Could not open the exported PDF: ${error2 instanceof Error ? error2.message : String(error2)}`);
+  }
+}
 
 // src/shell/export-modal.ts
 var import_obsidian5 = require("obsidian");
@@ -56340,6 +56424,10 @@ var ExportModal = class extends import_obsidian5.Modal {
         void this.repaginate();
       })
     ).addButton(
+      (button) => button.setButtonText("Print\u2026").onClick(() => {
+        this.print();
+      })
+    ).addButton(
       (button) => button.setButtonText("Export PDF").setCta().onClick(() => {
         void this.export();
       })
@@ -56397,6 +56485,15 @@ var ExportModal = class extends import_obsidian5.Modal {
     if (this.zoom !== null) copy.page.printScale = this.zoom;
     if (this.annotations !== "profile") copy.flags.annotationMode = this.annotations;
     return copy;
+  }
+  /** Send the preview straight to the OS print dialog, instead of writing a PDF file first. */
+  print() {
+    if (this.backend === null) return;
+    try {
+      this.backend.printPreview();
+    } catch (error2) {
+      this.fail(error2);
+    }
   }
   /** Whether fit-to-page will run for this export, profile default included. */
   fitsToPage() {
@@ -56480,6 +56577,7 @@ var ExportModal = class extends import_obsidian5.Modal {
         ...this.backend === null ? {} : { backend: this.backend }
       });
       announceOutcome(outcome);
+      void maybeOpenExport(outcome, this.settings);
       this.settings.lastExportDir = outputDir;
       void this.service.saveSettings();
       const written = outcome.written[0];
@@ -56631,6 +56729,7 @@ var FolderExportModal = class extends import_obsidian6.Modal {
       });
       for (const line of outcome.report.toLines()) this.log(line);
       announceOutcome(outcome);
+      void maybeOpenExport(outcome, this.settings);
     } catch (error2) {
       new import_obsidian6.Notice(`Export failed: ${describeError(error2)}`);
       this.log(`Failed: ${describeError(error2)}`);
@@ -57107,6 +57206,15 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
     }
   }
   renderGeneral(containerEl) {
+    new import_obsidian8.Setting(containerEl).setName("Export").setHeading();
+    new import_obsidian8.Setting(containerEl).setName("Open PDF after export").setDesc(
+      "Opens the finished PDF with your system's default viewer once export completes. Only when export produces a single file \u2014 a separate bulk export writing many PDFs is left alone."
+    ).addToggle(
+      (toggle) => toggle.setValue(this.settings.openPdfAfterExport).onChange(async (value) => {
+        this.settings.openPdfAfterExport = value;
+        await this.save();
+      })
+    );
     new import_obsidian8.Setting(containerEl).setName("Images").setHeading();
     new import_obsidian8.Setting(containerEl).setName("Image fetch timeout").setDesc("Milliseconds to wait for a remote image before substituting a placeholder.").addText(
       (text) => text.setValue(String(this.settings.imageFetchTimeoutMs)).onChange(async (value) => {
