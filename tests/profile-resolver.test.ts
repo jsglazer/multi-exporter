@@ -5,6 +5,7 @@ import {
 	pruneFolderProfiles,
 	resolveFolderProfile,
 	resolveProfileByCssClasses,
+	resolveProfileForExcalidraw,
 	resolveProfileForPath,
 	setFolderProfile,
 } from '../src/core/profile-resolver';
@@ -112,6 +113,20 @@ describe('resolveProfileByCssClasses', () => {
 
 	it('returns null for an empty class list', () => {
 		expect(resolveProfileByCssClasses(profiles, [])).toBeNull();
+	});
+});
+
+describe('resolveProfileForExcalidraw', () => {
+	it('finds the shipped profile flagged for it', () => {
+		expect(resolveProfileForExcalidraw(createDefaultProfiles())?.id).toBe('excalidraw');
+	});
+
+	it('returns null when no profile is flagged', () => {
+		const unflagged = createDefaultProfiles().map((profile) => ({
+			...profile,
+			flags: { ...profile.flags, useForExcalidraw: false },
+		}));
+		expect(resolveProfileForExcalidraw(unflagged)).toBeNull();
 	});
 });
 

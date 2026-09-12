@@ -74,6 +74,16 @@ export function resolveProfileByCssClasses(
 	return null;
 }
 
+/**
+ * The profile flagged `useForExcalidraw`, if any — the auto-select for a note the Excalidraw
+ * plugin owns, one step below an explicit `cssclasses` match and one step above folder/default
+ * resolution. `null` when no profile carries the flag, so the caller falls through exactly as
+ * it would for a note with no special profile at all.
+ */
+export function resolveProfileForExcalidraw(profiles: readonly Profile[]): Profile | null {
+	return profiles.find((profile) => profile.flags.useForExcalidraw) ?? null;
+}
+
 /** Set a folder's default profile. `''` sets the vault-wide default mapping. */
 export function setFolderProfile(map: FolderProfileMap, folder: string, profileId: string): FolderProfileMap {
 	return { ...map, [normalizePath(folder)]: profileId };

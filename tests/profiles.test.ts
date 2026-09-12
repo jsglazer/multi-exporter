@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
 	createDefaultProfiles,
 	createDefaultSettings,
+	makeProfileId,
+	migrateAddExcalidrawProfile,
 	migrateCrashingIndentRule,
 	migrateDuplicatedFurniture,
 	migrateLegacyMetricProfiles,
@@ -30,6 +32,60 @@ function savedProfile(overrides: { margins?: PageMargins; size?: Profile['page']
 		},
 	};
 }
+
+describe('shipped Excalidraw profile', () => {
+	it('is exactly one profile, flagged for auto-select', () => {
+		const flagged = createDefaultProfiles().filter((profile) => profile.flags.useForExcalidraw);
+		expect(flagged).toHaveLength(1);
+		expect(flagged[0]?.id).toBe('excalidraw');
+	});
+
+	it('ships fit-to-page on, since a canvas has no relationship to any page size', () => {
+		const excalidraw = createDefaultProfiles().find((profile) => profile.id === 'excalidraw');
+		expect(excalidraw?.page.fitToPage).toBe(true);
+	});
+});
+
+describe('migrateAddExcalidrawProfile', () => {
+	it('appends the shipped profile when nothing is flagged for it', () => {
+		const before = [createDefaultProfiles()[0] as Profile];
+		const after = migrateAddExcalidrawProfile(before);
+		expect(after).toHaveLength(2);
+		expect(after[1]?.flags.useForExcalidraw).toBe(true);
+	});
+
+	it('does nothing when a profile is already flagged, even a renamed or duplicated one', () => {
+		const custom: Profile = {
+			...(createDefaultProfiles()[0] as Profile),
+			id: 'boards',
+			name: 'My Boards',
+			flags: { ...(createDefaultProfiles()[0] as Profile).flags, useForExcalidraw: true },
+		};
+		const after = migrateAddExcalidrawProfile([custom]);
+		expect(after).toEqual([custom]);
+	});
+
+	it('disambiguates the id if something else already claims "excalidraw"', () => {
+		const clash: Profile = { ...(createDefaultProfiles()[0] as Profile), id: 'excalidraw', name: 'Unrelated' };
+		const after = migrateAddExcalidrawProfile([clash]);
+		expect(after).toHaveLength(2);
+		const added = after[1] as Profile;
+		expect(added.id).not.toBe('excalidraw');
+		expect(added.id).toBe(makeProfileId('Excalidraw', [clash]));
+		expect(added.flags.useForExcalidraw).toBe(true);
+	});
+
+	it('runs on load for settings saved before schema version 4', () => {
+		const settings = normalizeSettings({ settingsVersion: 3, profiles: [createDefaultProfiles()[0]] });
+		expect(settings.profiles.some((profile) => profile.flags.useForExcalidraw)).toBe(true);
+		expect(settings.settingsVersion).toBe(SETTINGS_VERSION);
+	});
+
+	it('is not re-run on settings already at the current version', () => {
+		const settings = normalizeSettings({ settingsVersion: SETTINGS_VERSION, profiles: [createDefaultProfiles()[0]] });
+		expect(settings.profiles.some((profile) => profile.flags.useForExcalidraw)).toBe(false);
+	});
+});
 
 describe('imperial defaults', () => {
 	it('ships US Letter with margins in inches', () => {

@@ -3,7 +3,8 @@ import type { App, SliderComponent, TextComponent, TFile } from 'obsidian';
 import { showDirectoryDialog } from '../adapter/obsidian-internals';
 import { planSeparateExport, singleNoteDestination } from '../core/export-plan';
 import { composeCss } from '../core/pipeline';
-import { resolveProfileByCssClasses, resolveProfileForPath } from '../core/profile-resolver';
+import { isExcalidrawNote } from '../core/excalidraw';
+import { resolveProfileByCssClasses, resolveProfileForExcalidraw, resolveProfileForPath } from '../core/profile-resolver';
 import { structuredCloneProfile } from '../core/profiles';
 import { clampPagesTall, clampPagesWide } from '../core/fit-pages';
 import type { AnnotationMode, PluginSettings, Profile } from '../core/types';
@@ -94,13 +95,17 @@ export class ExportModal extends Modal {
 		private readonly service: ExportService,
 	) {
 		super(app);
-		// A note's own `cssclasses` is the more specific signal, so it wins over the folder
-		// default when one of its classes names a real profile — e.g. `cssclasses: console`
-		// picks the "Console" profile even inside a folder mapped to something else.
+		// A note's own `cssclasses` is the most specific signal, so it wins over everything
+		// else when one of its classes names a real profile — e.g. `cssclasses: console`
+		// picks the "Console" profile even inside a folder mapped to something else. Next, a
+		// note the Excalidraw plugin owns auto-selects whichever profile is flagged for it,
+		// ahead of folder/default resolution — a board's canvas box has no relationship to
+		// whatever profile that folder happens to be mapped to.
 		const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter;
 		const cssClasses = normalizeCssClasses(frontmatter?.['cssclasses'] ?? frontmatter?.['cssclass']);
 		this.profile =
 			resolveProfileByCssClasses(settings.profiles, cssClasses) ??
+			(isExcalidrawNote(frontmatter) ? resolveProfileForExcalidraw(settings.profiles) : null) ??
 			resolveProfileForPath(settings.profiles, settings.folderProfiles, file.path, settings.defaultProfileId) ??
 			(settings.profiles[0] as Profile);
 		this.fileName = file.basename;

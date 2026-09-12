@@ -145,6 +145,13 @@ export interface ProfileFlags {
 	squeezerProfile?: string;
 	/** Where `md-annotation` comments go. Authoritative — the DOM never decides this. */
 	annotationMode: AnnotationMode;
+	/**
+	 * Auto-select this profile for a note the Excalidraw plugin owns, ahead of folder/default
+	 * resolution (but behind an explicit `cssclasses` match). Data on the profile, not an id
+	 * the code singles out — any profile can carry this flag, and at most one is expected to
+	 * at a time, so a profile the user renamed or duplicated keeps working exactly the same.
+	 */
+	useForExcalidraw: boolean;
 }
 
 export interface Profile {

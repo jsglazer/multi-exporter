@@ -464,6 +464,18 @@ export class MultiExporterSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(editor)
+			.setName('Use for excalidraw boards')
+			.setDesc(
+				'Auto-select this profile for a note the excalidraw plugin owns, ahead of folder/default resolution. Only one profile should have this on at a time.',
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(profile.flags.useForExcalidraw).onChange(async (value) => {
+					profile.flags.useForExcalidraw = value;
+					await this.save();
+				}),
+			);
+
+		new Setting(editor)
 			.setName('Annotations')
 			.setDesc('Where md-annotation comments go. This setting decides, not the sidebar.')
 			.addDropdown((dropdown) => {

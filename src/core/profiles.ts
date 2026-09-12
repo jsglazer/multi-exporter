@@ -52,6 +52,7 @@ function defaultFlags(): ProfileFlags {
 		pandocCitationScan: false,
 		runSqueezer: false,
 		annotationMode: 'off',
+		useForExcalidraw: false,
 	};
 }
 
@@ -121,6 +122,12 @@ h1 + p, h2 + p { text-indent: 0; }
 .mx-bibliography { break-before: page; line-height: 1.5; }
 .mx-bibliography > div { text-indent: -2em; padding-left: 2em; margin-bottom: 0.5em; }
 .mx-endnotes { break-before: page; line-height: 1.5; }
+`;
+
+const EXCALIDRAW_CSS = `/* Excalidraw boards: the drawing itself is Excalidraw's own rendered SVG and carries its
+   own styling, so there is nothing to normalise here beyond how a swapped-in note-embed's
+   content reads at the small size a canvas box is usually drawn at — see the
+   .mx-excalidraw-embed-content rule in the base stylesheet, which every profile already gets. */
 `;
 
 export function createDefaultProfiles(): Profile[] {
@@ -199,6 +206,28 @@ export function createDefaultProfiles(): Profile[] {
 				annotationMode: 'endnotes',
 			},
 		},
+		{
+			id: 'excalidraw',
+			name: 'Excalidraw',
+			backendId: PAGEDJS_BACKEND_ID,
+			stylesheet: EXCALIDRAW_CSS,
+			cslStyle: '',
+			page: {
+				...defaultPage(),
+				// A canvas is closer to a whiteboard than a page of prose, and a board's own
+				// bounding box has no relationship to any printed page size, so it is close to
+				// guaranteed to need shrinking — unlike every other shipped profile, where
+				// fitToPage off is the sane default.
+				orientation: 'landscape',
+				margins: { top: '0.5in', right: '0.5in', bottom: '0.5in', left: '0.5in' },
+				fitToPage: true,
+				furniture: {
+					bottomLeft: { content: cssString('') },
+					bottomRight: { content: 'counter(page) " / " counter(pages)' },
+				},
+			},
+			flags: { ...defaultFlags(), useForExcalidraw: true },
+		},
 	];
 }
 
@@ -218,8 +247,13 @@ export function createDefaultProfiles(): Profile[] {
  * recto/verso blocks rather than being replaced by them and printed the page number twice on
  * every page. Same reasoning as 2: the page config is persisted, so the shipped fix alone
  * reaches nobody who already has the profile.
+ *
+ * 4 — a new shipped "Excalidraw" profile is added, flagged `useForExcalidraw` so an
+ * Excalidraw canvas note auto-selects it. Existing settings already have a `profiles` array
+ * without it — a brand new shipped default is not something a merge can invent, so it is
+ * appended once by this migration rather than reaching existing vaults automatically.
  */
-export const SETTINGS_VERSION = 3;
+export const SETTINGS_VERSION = 4;
 
 /**
  * The exact metric page defaults that shipped before `SETTINGS_VERSION` 1, each paired with
@@ -338,6 +372,22 @@ export function migrateDuplicatedFurniture(profiles: readonly Profile[]): Profil
 	});
 }
 
+/**
+ * Add the shipped Excalidraw profile to settings that predate it.
+ *
+ * Keyed on `useForExcalidraw` rather than the id `excalidraw`, for the same reason every
+ * other lookup in this plugin avoids matching a profile by name: a user who already made
+ * their own profile and flagged it for Excalidraw boards (or renamed/duplicated the shipped
+ * one) has already opted in, and does not need a second copy appended alongside it.
+ */
+export function migrateAddExcalidrawProfile(profiles: readonly Profile[]): Profile[] {
+	if (profiles.some((profile) => profile.flags.useForExcalidraw)) return profiles.slice();
+	const shipped = createDefaultProfiles().find((profile) => profile.flags.useForExcalidraw);
+	if (shipped === undefined) return profiles.slice();
+	const id = makeProfileId(shipped.name, profiles);
+	return [...profiles, id === shipped.id ? shipped : { ...shipped, id }];
+}
+
 /** The six margin boxes, as `[key]` tuples — the order is not significant here. */
 const MARGIN_BOX_KEYS: [keyof PageFurniture][] = [
 	['topLeft'],
@@ -420,7 +470,8 @@ export function normalizeSettings(loaded: unknown): PluginSettings {
 		Array.isArray(raw.profiles) && raw.profiles.length > 0 ? raw.profiles.map(normalizeProfile) : defaults.profiles;
 	const metric = loadedVersion < 1 ? migrateLegacyMetricProfiles(normalized) : normalized;
 	const indent = loadedVersion < 2 ? migrateCrashingIndentRule(metric) : metric;
-	const profiles = loadedVersion < 3 ? migrateDuplicatedFurniture(indent) : indent;
+	const furniture = loadedVersion < 3 ? migrateDuplicatedFurniture(indent) : indent;
+	const profiles = loadedVersion < 4 ? migrateAddExcalidrawProfile(furniture) : furniture;
 	const ids = new Set(profiles.map((profile) => profile.id));
 	const defaultProfileId =
 		typeof raw.defaultProfileId === 'string' && ids.has(raw.defaultProfileId)

@@ -4361,6 +4361,10 @@ function resolveProfileByCssClasses(profiles, cssClasses) {
   }
   return null;
 }
+function resolveProfileForExcalidraw(profiles) {
+  var _a;
+  return (_a = profiles.find((profile) => profile.flags.useForExcalidraw)) != null ? _a : null;
+}
 function setFolderProfile(map, folder, profileId) {
   return { ...map, [normalizePath(folder)]: profileId };
 }
@@ -4583,7 +4587,8 @@ function defaultFlags() {
     inlineImages: true,
     pandocCitationScan: false,
     runSqueezer: false,
-    annotationMode: "off"
+    annotationMode: "off",
+    useForExcalidraw: false
   };
 }
 var ARTICLE_CSS = `/* Clipped articles: prose typography, images kept inside the text block. */
@@ -4650,6 +4655,11 @@ h1 + p, h2 + p { text-indent: 0; }
 .mx-bibliography { break-before: page; line-height: 1.5; }
 .mx-bibliography > div { text-indent: -2em; padding-left: 2em; margin-bottom: 0.5em; }
 .mx-endnotes { break-before: page; line-height: 1.5; }
+`;
+var EXCALIDRAW_CSS = `/* Excalidraw boards: the drawing itself is Excalidraw's own rendered SVG and carries its
+   own styling, so there is nothing to normalise here beyond how a swapped-in note-embed's
+   content reads at the small size a canvas box is usually drawn at \u2014 see the
+   .mx-excalidraw-embed-content rule in the base stylesheet, which every profile already gets. */
 `;
 function createDefaultProfiles() {
   return [
@@ -4726,10 +4736,32 @@ function createDefaultProfiles() {
         emitBibliography: true,
         annotationMode: "endnotes"
       }
+    },
+    {
+      id: "excalidraw",
+      name: "Excalidraw",
+      backendId: PAGEDJS_BACKEND_ID,
+      stylesheet: EXCALIDRAW_CSS,
+      cslStyle: "",
+      page: {
+        ...defaultPage(),
+        // A canvas is closer to a whiteboard than a page of prose, and a board's own
+        // bounding box has no relationship to any printed page size, so it is close to
+        // guaranteed to need shrinking — unlike every other shipped profile, where
+        // fitToPage off is the sane default.
+        orientation: "landscape",
+        margins: { top: "0.5in", right: "0.5in", bottom: "0.5in", left: "0.5in" },
+        fitToPage: true,
+        furniture: {
+          bottomLeft: { content: cssString("") },
+          bottomRight: { content: 'counter(page) " / " counter(pages)' }
+        }
+      },
+      flags: { ...defaultFlags(), useForExcalidraw: true }
     }
   ];
 }
-var SETTINGS_VERSION = 3;
+var SETTINGS_VERSION = 4;
 var LEGACY_METRIC_PAGES = [
   {
     legacy: { top: "20mm", right: "18mm", bottom: "20mm", left: "18mm" },
@@ -4795,6 +4827,13 @@ function migrateDuplicatedFurniture(profiles) {
     return dropped ? { ...profile, page: { ...profile.page, furniture: kept } } : profile;
   });
 }
+function migrateAddExcalidrawProfile(profiles) {
+  if (profiles.some((profile) => profile.flags.useForExcalidraw)) return profiles.slice();
+  const shipped = createDefaultProfiles().find((profile) => profile.flags.useForExcalidraw);
+  if (shipped === void 0) return profiles.slice();
+  const id = makeProfileId(shipped.name, profiles);
+  return [...profiles, id === shipped.id ? shipped : { ...shipped, id }];
+}
 var MARGIN_BOX_KEYS = [
   ["topLeft"],
   ["topCenter"],
@@ -4855,7 +4894,8 @@ function normalizeSettings(loaded) {
   const normalized = Array.isArray(raw.profiles) && raw.profiles.length > 0 ? raw.profiles.map(normalizeProfile) : defaults.profiles;
   const metric = loadedVersion < 1 ? migrateLegacyMetricProfiles(normalized) : normalized;
   const indent = loadedVersion < 2 ? migrateCrashingIndentRule(metric) : metric;
-  const profiles = loadedVersion < 3 ? migrateDuplicatedFurniture(indent) : indent;
+  const furniture = loadedVersion < 3 ? migrateDuplicatedFurniture(indent) : indent;
+  const profiles = loadedVersion < 4 ? migrateAddExcalidrawProfile(furniture) : furniture;
   const ids = new Set(profiles.map((profile) => profile.id));
   const defaultProfileId = typeof raw.defaultProfileId === "string" && ids.has(raw.defaultProfileId) ? raw.defaultProfileId : (_b = (_a = profiles[0]) == null ? void 0 : _a.id) != null ? _b : defaults.defaultProfileId;
   const folderProfiles = {};
@@ -56481,7 +56521,7 @@ function trimTrailingSlash(dir) {
 // src/shell/export-modal.ts
 var ExportModal = class extends import_obsidian6.Modal {
   constructor(app, file, settings, service) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
     super(app);
     this.file = file;
     this.settings = settings;
@@ -56551,7 +56591,7 @@ var ExportModal = class extends import_obsidian6.Modal {
     this.repaginateQueued = false;
     const frontmatter = (_a = app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
     const cssClasses = normalizeCssClasses((_b = frontmatter == null ? void 0 : frontmatter["cssclasses"]) != null ? _b : frontmatter == null ? void 0 : frontmatter["cssclass"]);
-    this.profile = (_d = (_c = resolveProfileByCssClasses(settings.profiles, cssClasses)) != null ? _c : resolveProfileForPath(settings.profiles, settings.folderProfiles, file.path, settings.defaultProfileId)) != null ? _d : settings.profiles[0];
+    this.profile = (_e = (_d = (_c = resolveProfileByCssClasses(settings.profiles, cssClasses)) != null ? _c : isExcalidrawNote(frontmatter) ? resolveProfileForExcalidraw(settings.profiles) : null) != null ? _d : resolveProfileForPath(settings.profiles, settings.folderProfiles, file.path, settings.defaultProfileId)) != null ? _e : settings.profiles[0];
     this.fileName = file.basename;
   }
   onOpen() {
@@ -57347,6 +57387,14 @@ var MultiExporterSettingTab = class extends import_obsidian9.PluginSettingTab {
     new import_obsidian9.Setting(editor).setName("Inline images").setDesc("Embed remote and vault images as data URIs, so exports work offline.").addToggle(
       (toggle) => toggle.setValue(profile.flags.inlineImages).onChange(async (value) => {
         profile.flags.inlineImages = value;
+        await this.save();
+      })
+    );
+    new import_obsidian9.Setting(editor).setName("Use for excalidraw boards").setDesc(
+      "Auto-select this profile for a note the excalidraw plugin owns, ahead of folder/default resolution. Only one profile should have this on at a time."
+    ).addToggle(
+      (toggle) => toggle.setValue(profile.flags.useForExcalidraw).onChange(async (value) => {
+        profile.flags.useForExcalidraw = value;
         await this.save();
       })
     );
