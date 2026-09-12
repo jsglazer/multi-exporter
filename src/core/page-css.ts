@@ -64,13 +64,13 @@ mjx-container svg { max-width: 100%; height: auto; }
    click. The footnote text itself is kept — only the backlink goes. */
 .footnote-backref { display: none; }
 
-/* An Excalidraw board of note embeds (see shell/excalidraw-render.ts): each box is placed at
-   its own canvas position, sized to at least the canvas box but free to grow taller for
-   content that would not otherwise fit — clipping it would silently drop text, so instead
-   the whole board relies on the profile's own "fit to page" to shrink it back down, the same
-   as any other oversized element. */
-.mx-excalidraw-board { position: relative; }
-.mx-excalidraw-box { position: absolute; box-sizing: border-box; overflow: visible; border: 1px solid currentColor; padding: 4px; }
+/* An Excalidraw canvas note (see shell/excalidraw-render.ts): the drawing itself is
+   Excalidraw's own rendered SVG, styled by Excalidraw, not by this stylesheet. Only the
+   note content swapped into a note-embed box needs rules here, and only enough to keep it
+   readable at the small size such a box is usually drawn at, plus room to grow taller
+   rather than clip — the "fit to page" mechanism handles shrinking the whole drawing back
+   down afterwards, the same as it would any other oversized element. */
+.mx-excalidraw-embed-content { font-size: 10px; line-height: 1.3; overflow: visible; }
 .mx-excalidraw-placeholder { font-style: italic; opacity: 0.7; }
 
 /* Running-head source. The wrapper carries the note name and the export timestamp so a

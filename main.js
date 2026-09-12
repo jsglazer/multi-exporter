@@ -4257,462 +4257,6 @@ var require_pako = __commonJS({
   }
 });
 
-// node_modules/lz-string/libs/lz-string.js
-var require_lz_string = __commonJS({
-  "node_modules/lz-string/libs/lz-string.js"(exports, module2) {
-    var LZString = (function() {
-      var f = String.fromCharCode;
-      var keyStrBase64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
-      var keyStrUriSafe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-$";
-      var baseReverseDic = {};
-      function getBaseValue(alphabet, character) {
-        if (!baseReverseDic[alphabet]) {
-          baseReverseDic[alphabet] = {};
-          for (var i3 = 0; i3 < alphabet.length; i3++) {
-            baseReverseDic[alphabet][alphabet.charAt(i3)] = i3;
-          }
-        }
-        return baseReverseDic[alphabet][character];
-      }
-      var LZString2 = {
-        compressToBase64: function(input) {
-          if (input == null) return "";
-          var res = LZString2._compress(input, 6, function(a) {
-            return keyStrBase64.charAt(a);
-          });
-          switch (res.length % 4) {
-            // To produce valid Base64
-            default:
-            // When could this happen ?
-            case 0:
-              return res;
-            case 1:
-              return res + "===";
-            case 2:
-              return res + "==";
-            case 3:
-              return res + "=";
-          }
-        },
-        decompressFromBase64: function(input) {
-          if (input == null) return "";
-          if (input == "") return null;
-          return LZString2._decompress(input.length, 32, function(index) {
-            return getBaseValue(keyStrBase64, input.charAt(index));
-          });
-        },
-        compressToUTF16: function(input) {
-          if (input == null) return "";
-          return LZString2._compress(input, 15, function(a) {
-            return f(a + 32);
-          }) + " ";
-        },
-        decompressFromUTF16: function(compressed) {
-          if (compressed == null) return "";
-          if (compressed == "") return null;
-          return LZString2._decompress(compressed.length, 16384, function(index) {
-            return compressed.charCodeAt(index) - 32;
-          });
-        },
-        //compress into uint8array (UCS-2 big endian format)
-        compressToUint8Array: function(uncompressed) {
-          var compressed = LZString2.compress(uncompressed);
-          var buf = new Uint8Array(compressed.length * 2);
-          for (var i3 = 0, TotalLen = compressed.length; i3 < TotalLen; i3++) {
-            var current_value = compressed.charCodeAt(i3);
-            buf[i3 * 2] = current_value >>> 8;
-            buf[i3 * 2 + 1] = current_value % 256;
-          }
-          return buf;
-        },
-        //decompress from uint8array (UCS-2 big endian format)
-        decompressFromUint8Array: function(compressed) {
-          if (compressed === null || compressed === void 0) {
-            return LZString2.decompress(compressed);
-          } else {
-            var buf = new Array(compressed.length / 2);
-            for (var i3 = 0, TotalLen = buf.length; i3 < TotalLen; i3++) {
-              buf[i3] = compressed[i3 * 2] * 256 + compressed[i3 * 2 + 1];
-            }
-            var result = [];
-            buf.forEach(function(c) {
-              result.push(f(c));
-            });
-            return LZString2.decompress(result.join(""));
-          }
-        },
-        //compress into a string that is already URI encoded
-        compressToEncodedURIComponent: function(input) {
-          if (input == null) return "";
-          return LZString2._compress(input, 6, function(a) {
-            return keyStrUriSafe.charAt(a);
-          });
-        },
-        //decompress from an output of compressToEncodedURIComponent
-        decompressFromEncodedURIComponent: function(input) {
-          if (input == null) return "";
-          if (input == "") return null;
-          input = input.replace(/ /g, "+");
-          return LZString2._decompress(input.length, 32, function(index) {
-            return getBaseValue(keyStrUriSafe, input.charAt(index));
-          });
-        },
-        compress: function(uncompressed) {
-          return LZString2._compress(uncompressed, 16, function(a) {
-            return f(a);
-          });
-        },
-        _compress: function(uncompressed, bitsPerChar, getCharFromInt) {
-          if (uncompressed == null) return "";
-          var i3, value, context_dictionary = {}, context_dictionaryToCreate = {}, context_c = "", context_wc = "", context_w = "", context_enlargeIn = 2, context_dictSize = 3, context_numBits = 2, context_data = [], context_data_val = 0, context_data_position = 0, ii;
-          for (ii = 0; ii < uncompressed.length; ii += 1) {
-            context_c = uncompressed.charAt(ii);
-            if (!Object.prototype.hasOwnProperty.call(context_dictionary, context_c)) {
-              context_dictionary[context_c] = context_dictSize++;
-              context_dictionaryToCreate[context_c] = true;
-            }
-            context_wc = context_w + context_c;
-            if (Object.prototype.hasOwnProperty.call(context_dictionary, context_wc)) {
-              context_w = context_wc;
-            } else {
-              if (Object.prototype.hasOwnProperty.call(context_dictionaryToCreate, context_w)) {
-                if (context_w.charCodeAt(0) < 256) {
-                  for (i3 = 0; i3 < context_numBits; i3++) {
-                    context_data_val = context_data_val << 1;
-                    if (context_data_position == bitsPerChar - 1) {
-                      context_data_position = 0;
-                      context_data.push(getCharFromInt(context_data_val));
-                      context_data_val = 0;
-                    } else {
-                      context_data_position++;
-                    }
-                  }
-                  value = context_w.charCodeAt(0);
-                  for (i3 = 0; i3 < 8; i3++) {
-                    context_data_val = context_data_val << 1 | value & 1;
-                    if (context_data_position == bitsPerChar - 1) {
-                      context_data_position = 0;
-                      context_data.push(getCharFromInt(context_data_val));
-                      context_data_val = 0;
-                    } else {
-                      context_data_position++;
-                    }
-                    value = value >> 1;
-                  }
-                } else {
-                  value = 1;
-                  for (i3 = 0; i3 < context_numBits; i3++) {
-                    context_data_val = context_data_val << 1 | value;
-                    if (context_data_position == bitsPerChar - 1) {
-                      context_data_position = 0;
-                      context_data.push(getCharFromInt(context_data_val));
-                      context_data_val = 0;
-                    } else {
-                      context_data_position++;
-                    }
-                    value = 0;
-                  }
-                  value = context_w.charCodeAt(0);
-                  for (i3 = 0; i3 < 16; i3++) {
-                    context_data_val = context_data_val << 1 | value & 1;
-                    if (context_data_position == bitsPerChar - 1) {
-                      context_data_position = 0;
-                      context_data.push(getCharFromInt(context_data_val));
-                      context_data_val = 0;
-                    } else {
-                      context_data_position++;
-                    }
-                    value = value >> 1;
-                  }
-                }
-                context_enlargeIn--;
-                if (context_enlargeIn == 0) {
-                  context_enlargeIn = Math.pow(2, context_numBits);
-                  context_numBits++;
-                }
-                delete context_dictionaryToCreate[context_w];
-              } else {
-                value = context_dictionary[context_w];
-                for (i3 = 0; i3 < context_numBits; i3++) {
-                  context_data_val = context_data_val << 1 | value & 1;
-                  if (context_data_position == bitsPerChar - 1) {
-                    context_data_position = 0;
-                    context_data.push(getCharFromInt(context_data_val));
-                    context_data_val = 0;
-                  } else {
-                    context_data_position++;
-                  }
-                  value = value >> 1;
-                }
-              }
-              context_enlargeIn--;
-              if (context_enlargeIn == 0) {
-                context_enlargeIn = Math.pow(2, context_numBits);
-                context_numBits++;
-              }
-              context_dictionary[context_wc] = context_dictSize++;
-              context_w = String(context_c);
-            }
-          }
-          if (context_w !== "") {
-            if (Object.prototype.hasOwnProperty.call(context_dictionaryToCreate, context_w)) {
-              if (context_w.charCodeAt(0) < 256) {
-                for (i3 = 0; i3 < context_numBits; i3++) {
-                  context_data_val = context_data_val << 1;
-                  if (context_data_position == bitsPerChar - 1) {
-                    context_data_position = 0;
-                    context_data.push(getCharFromInt(context_data_val));
-                    context_data_val = 0;
-                  } else {
-                    context_data_position++;
-                  }
-                }
-                value = context_w.charCodeAt(0);
-                for (i3 = 0; i3 < 8; i3++) {
-                  context_data_val = context_data_val << 1 | value & 1;
-                  if (context_data_position == bitsPerChar - 1) {
-                    context_data_position = 0;
-                    context_data.push(getCharFromInt(context_data_val));
-                    context_data_val = 0;
-                  } else {
-                    context_data_position++;
-                  }
-                  value = value >> 1;
-                }
-              } else {
-                value = 1;
-                for (i3 = 0; i3 < context_numBits; i3++) {
-                  context_data_val = context_data_val << 1 | value;
-                  if (context_data_position == bitsPerChar - 1) {
-                    context_data_position = 0;
-                    context_data.push(getCharFromInt(context_data_val));
-                    context_data_val = 0;
-                  } else {
-                    context_data_position++;
-                  }
-                  value = 0;
-                }
-                value = context_w.charCodeAt(0);
-                for (i3 = 0; i3 < 16; i3++) {
-                  context_data_val = context_data_val << 1 | value & 1;
-                  if (context_data_position == bitsPerChar - 1) {
-                    context_data_position = 0;
-                    context_data.push(getCharFromInt(context_data_val));
-                    context_data_val = 0;
-                  } else {
-                    context_data_position++;
-                  }
-                  value = value >> 1;
-                }
-              }
-              context_enlargeIn--;
-              if (context_enlargeIn == 0) {
-                context_enlargeIn = Math.pow(2, context_numBits);
-                context_numBits++;
-              }
-              delete context_dictionaryToCreate[context_w];
-            } else {
-              value = context_dictionary[context_w];
-              for (i3 = 0; i3 < context_numBits; i3++) {
-                context_data_val = context_data_val << 1 | value & 1;
-                if (context_data_position == bitsPerChar - 1) {
-                  context_data_position = 0;
-                  context_data.push(getCharFromInt(context_data_val));
-                  context_data_val = 0;
-                } else {
-                  context_data_position++;
-                }
-                value = value >> 1;
-              }
-            }
-            context_enlargeIn--;
-            if (context_enlargeIn == 0) {
-              context_enlargeIn = Math.pow(2, context_numBits);
-              context_numBits++;
-            }
-          }
-          value = 2;
-          for (i3 = 0; i3 < context_numBits; i3++) {
-            context_data_val = context_data_val << 1 | value & 1;
-            if (context_data_position == bitsPerChar - 1) {
-              context_data_position = 0;
-              context_data.push(getCharFromInt(context_data_val));
-              context_data_val = 0;
-            } else {
-              context_data_position++;
-            }
-            value = value >> 1;
-          }
-          while (true) {
-            context_data_val = context_data_val << 1;
-            if (context_data_position == bitsPerChar - 1) {
-              context_data.push(getCharFromInt(context_data_val));
-              break;
-            } else context_data_position++;
-          }
-          return context_data.join("");
-        },
-        decompress: function(compressed) {
-          if (compressed == null) return "";
-          if (compressed == "") return null;
-          return LZString2._decompress(compressed.length, 32768, function(index) {
-            return compressed.charCodeAt(index);
-          });
-        },
-        _decompress: function(length, resetValue, getNextValue) {
-          var dictionary = [], next, enlargeIn = 4, dictSize = 4, numBits = 3, entry = "", result = [], i3, w, bits, resb, maxpower, power, c, data = { val: getNextValue(0), position: resetValue, index: 1 };
-          for (i3 = 0; i3 < 3; i3 += 1) {
-            dictionary[i3] = i3;
-          }
-          bits = 0;
-          maxpower = Math.pow(2, 2);
-          power = 1;
-          while (power != maxpower) {
-            resb = data.val & data.position;
-            data.position >>= 1;
-            if (data.position == 0) {
-              data.position = resetValue;
-              data.val = getNextValue(data.index++);
-            }
-            bits |= (resb > 0 ? 1 : 0) * power;
-            power <<= 1;
-          }
-          switch (next = bits) {
-            case 0:
-              bits = 0;
-              maxpower = Math.pow(2, 8);
-              power = 1;
-              while (power != maxpower) {
-                resb = data.val & data.position;
-                data.position >>= 1;
-                if (data.position == 0) {
-                  data.position = resetValue;
-                  data.val = getNextValue(data.index++);
-                }
-                bits |= (resb > 0 ? 1 : 0) * power;
-                power <<= 1;
-              }
-              c = f(bits);
-              break;
-            case 1:
-              bits = 0;
-              maxpower = Math.pow(2, 16);
-              power = 1;
-              while (power != maxpower) {
-                resb = data.val & data.position;
-                data.position >>= 1;
-                if (data.position == 0) {
-                  data.position = resetValue;
-                  data.val = getNextValue(data.index++);
-                }
-                bits |= (resb > 0 ? 1 : 0) * power;
-                power <<= 1;
-              }
-              c = f(bits);
-              break;
-            case 2:
-              return "";
-          }
-          dictionary[3] = c;
-          w = c;
-          result.push(c);
-          while (true) {
-            if (data.index > length) {
-              return "";
-            }
-            bits = 0;
-            maxpower = Math.pow(2, numBits);
-            power = 1;
-            while (power != maxpower) {
-              resb = data.val & data.position;
-              data.position >>= 1;
-              if (data.position == 0) {
-                data.position = resetValue;
-                data.val = getNextValue(data.index++);
-              }
-              bits |= (resb > 0 ? 1 : 0) * power;
-              power <<= 1;
-            }
-            switch (c = bits) {
-              case 0:
-                bits = 0;
-                maxpower = Math.pow(2, 8);
-                power = 1;
-                while (power != maxpower) {
-                  resb = data.val & data.position;
-                  data.position >>= 1;
-                  if (data.position == 0) {
-                    data.position = resetValue;
-                    data.val = getNextValue(data.index++);
-                  }
-                  bits |= (resb > 0 ? 1 : 0) * power;
-                  power <<= 1;
-                }
-                dictionary[dictSize++] = f(bits);
-                c = dictSize - 1;
-                enlargeIn--;
-                break;
-              case 1:
-                bits = 0;
-                maxpower = Math.pow(2, 16);
-                power = 1;
-                while (power != maxpower) {
-                  resb = data.val & data.position;
-                  data.position >>= 1;
-                  if (data.position == 0) {
-                    data.position = resetValue;
-                    data.val = getNextValue(data.index++);
-                  }
-                  bits |= (resb > 0 ? 1 : 0) * power;
-                  power <<= 1;
-                }
-                dictionary[dictSize++] = f(bits);
-                c = dictSize - 1;
-                enlargeIn--;
-                break;
-              case 2:
-                return result.join("");
-            }
-            if (enlargeIn == 0) {
-              enlargeIn = Math.pow(2, numBits);
-              numBits++;
-            }
-            if (dictionary[c]) {
-              entry = dictionary[c];
-            } else {
-              if (c === dictSize) {
-                entry = w + w.charAt(0);
-              } else {
-                return null;
-              }
-            }
-            result.push(entry);
-            dictionary[dictSize++] = w + entry.charAt(0);
-            enlargeIn--;
-            w = entry;
-            if (enlargeIn == 0) {
-              enlargeIn = Math.pow(2, numBits);
-              numBits++;
-            }
-          }
-        }
-      };
-      return LZString2;
-    })();
-    if (typeof define === "function" && define.amd) {
-      define(function() {
-        return LZString;
-      });
-    } else if (typeof module2 !== "undefined" && module2 != null) {
-      module2.exports = LZString;
-    } else if (typeof angular !== "undefined" && angular != null) {
-      angular.module("LZString", []).factory("LZString", function() {
-        return LZString;
-      });
-    }
-  }
-});
-
 // src/main.ts
 var main_exports = {};
 __export(main_exports, {
@@ -4872,13 +4416,13 @@ mjx-container svg { max-width: 100%; height: auto; }
    click. The footnote text itself is kept \u2014 only the backlink goes. */
 .footnote-backref { display: none; }
 
-/* An Excalidraw board of note embeds (see shell/excalidraw-render.ts): each box is placed at
-   its own canvas position, sized to at least the canvas box but free to grow taller for
-   content that would not otherwise fit \u2014 clipping it would silently drop text, so instead
-   the whole board relies on the profile's own "fit to page" to shrink it back down, the same
-   as any other oversized element. */
-.mx-excalidraw-board { position: relative; }
-.mx-excalidraw-box { position: absolute; box-sizing: border-box; overflow: visible; border: 1px solid currentColor; padding: 4px; }
+/* An Excalidraw canvas note (see shell/excalidraw-render.ts): the drawing itself is
+   Excalidraw's own rendered SVG, styled by Excalidraw, not by this stylesheet. Only the
+   note content swapped into a note-embed box needs rules here, and only enough to keep it
+   readable at the small size such a box is usually drawn at, plus room to grow taller
+   rather than clip \u2014 the "fit to page" mechanism handles shrinking the whole drawing back
+   down afterwards, the same as it would any other oversized element. */
+.mx-excalidraw-embed-content { font-size: 10px; line-height: 1.3; overflow: visible; }
 .mx-excalidraw-placeholder { font-style: italic; opacity: 0.7; }
 
 /* Running-head source. The wrapper carries the note name and the export timestamp so a
@@ -5416,6 +4960,16 @@ function getPluginStringSetting(app, pluginId, key) {
   if (settings === void 0) return null;
   const value = settings[key];
   return typeof value === "string" ? value : null;
+}
+var EXCALIDRAW_PLUGIN_ID = "obsidian-excalidraw-plugin";
+function asExcalidrawAutomateApi(candidate) {
+  if (candidate === null || typeof candidate !== "object") return null;
+  const api = candidate;
+  return typeof api.createSVG === "function" ? api : null;
+}
+function getExcalidrawAutomate(app) {
+  if (!isPluginEnabled(app, EXCALIDRAW_PLUGIN_ID)) return null;
+  return asExcalidrawAutomateApi(window.ExcalidrawAutomate);
 }
 var MD_ANNOTATION_STRIP_CLASSES = {
   unwrap: ["mdann-hl", "mdann-anchor"],
@@ -56213,28 +55767,8 @@ var PdfLibOutlineInjector = class {
 var import_obsidian3 = require("obsidian");
 
 // src/core/excalidraw.ts
-var import_lz_string = __toESM(require_lz_string(), 1);
 function isExcalidrawNote(frontmatter) {
   return (frontmatter == null ? void 0 : frontmatter["excalidraw-plugin"]) === "parsed" || (frontmatter == null ? void 0 : frontmatter["excalidraw-plugin"]) === "raw";
-}
-function extractSceneSource(markdown) {
-  var _a;
-  const match = /```(compressed-json|json)\r?\n([\s\S]*?)```/.exec(markdown);
-  if (match === null) return null;
-  const kind = match[1];
-  const body = (_a = match[2]) != null ? _a : "";
-  return { compressed: kind === "compressed-json", body: body.trim() };
-}
-function parseExcalidrawScene(source) {
-  const json = source.compressed ? (0, import_lz_string.decompressFromBase64)(source.body.replace(/\s+/g, "")) : source.body;
-  if (json === null || json === "") {
-    throw new Error("Excalidraw scene data could not be decompressed.");
-  }
-  const parsed = JSON.parse(json);
-  if (typeof parsed !== "object" || parsed === null || !Array.isArray(parsed.elements)) {
-    throw new Error("Excalidraw scene JSON did not have the expected shape.");
-  }
-  return { elements: parsed.elements };
 }
 function resolveEmbedLinkTarget(link) {
   var _a, _b;
@@ -56250,85 +55784,146 @@ function resolveEmbedLinkTarget(link) {
     return null;
   }
 }
-function computeBoardLayout(scene) {
-  const embeddables = scene.elements.filter((element) => element.isDeleted !== true && element.type === "embeddable");
-  if (embeddables.length === 0) return { width: 0, height: 0, boxes: [] };
-  const minX = Math.min(...embeddables.map((element) => element.x));
-  const minY = Math.min(...embeddables.map((element) => element.y));
-  const maxX = Math.max(...embeddables.map((element) => element.x + element.width));
-  const maxY = Math.max(...embeddables.map((element) => element.y + element.height));
-  const boxes = embeddables.map((element) => ({
-    id: element.id,
-    x: element.x - minX,
-    y: element.y - minY,
-    width: element.width,
-    height: element.height,
-    linkTarget: resolveEmbedLinkTarget(element.link)
-  }));
-  return { width: maxX - minX, height: maxY - minY, boxes };
+
+// src/shell/dom-stability.ts
+var STABILITY_POLL_MS = 60;
+var STABILITY_SAMPLES = 3;
+var STABILITY_TIMEOUT_MS = 15e3;
+async function waitForDomStability(element, options = {}) {
+  var _a, _b, _c;
+  const pollMs = (_a = options.pollMs) != null ? _a : STABILITY_POLL_MS;
+  const required = (_b = options.samples) != null ? _b : STABILITY_SAMPLES;
+  const timeoutMs = (_c = options.timeoutMs) != null ? _c : STABILITY_TIMEOUT_MS;
+  const started = Date.now();
+  let previous = signature(element);
+  let stable = 0;
+  while (stable < required) {
+    if (Date.now() - started > timeoutMs) return;
+    await sleep(pollMs);
+    const current = signature(element);
+    if (current === previous) {
+      stable++;
+    } else {
+      stable = 0;
+      previous = current;
+    }
+  }
+}
+function signature(element) {
+  return `${element.innerHTML.length}:${element.querySelectorAll("*").length}`;
+}
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 // src/shell/excalidraw-render.ts
 var import_obsidian2 = require("obsidian");
-var BOARD_CLASS = "mx-excalidraw-board";
-var BOX_CLASS = "mx-excalidraw-box";
 var PLACEHOLDER_CLASS = "mx-excalidraw-placeholder";
-async function renderExcalidrawBoard(app, file, markdown, container, component, ancestors) {
-  const source = extractSceneSource(markdown);
-  if (source === null) {
-    placeholder(container, "This Excalidraw drawing has no scene data to render.");
+var EMBED_CONTENT_CLASS = "mx-excalidraw-embed-content";
+async function renderExcalidrawBoard(app, file, container, component, ancestors) {
+  var _a;
+  const automate = getExcalidrawAutomate(app);
+  if (automate === null) {
+    placeholder(container, "The Excalidraw plugin is required to export this drawing, and is not enabled.");
     return;
   }
-  let layout;
+  let svg;
   try {
-    layout = computeBoardLayout(parseExcalidrawScene(source));
+    svg = await automate.createSVG(file.path, true);
   } catch (error2) {
-    placeholder(container, `This Excalidraw drawing could not be read: ${errorMessage(error2)}`);
+    placeholder(container, `This Excalidraw drawing could not be rendered: ${errorMessage(error2)}`);
     return;
   }
-  if (layout.boxes.length === 0) {
-    placeholder(container, "This Excalidraw drawing has no embedded notes to render.");
-    return;
+  svg.setCssStyles({ overflow: "visible" });
+  container.appendChild(svg);
+  const swapped = [];
+  const anchors = Array.from(svg.querySelectorAll("a"));
+  for (const anchor of anchors) {
+    const href = anchorHref(anchor);
+    const foreignObject = anchor.querySelector("foreignObject");
+    if (href === null || foreignObject === null) continue;
+    const linkTarget = resolveEmbedLinkTarget(href);
+    if (linkTarget === null) continue;
+    const outcome = await renderEmbedBox(app, file, linkTarget, foreignObject, component, ancestors);
+    if (!outcome) continue;
+    hideLinkLabel(anchor);
+    swapped.push({ foreignObject, declaredHeight: parseFloat((_a = foreignObject.getAttribute("height")) != null ? _a : "0") });
   }
-  const board = container.createDiv({ cls: BOARD_CLASS });
-  board.style.width = `${layout.width}px`;
-  board.style.minHeight = `${layout.height}px`;
-  for (const box of layout.boxes) {
-    const boxEl = board.createDiv({ cls: BOX_CLASS });
-    boxEl.style.left = `${box.x}px`;
-    boxEl.style.top = `${box.y}px`;
-    boxEl.style.width = `${box.width}px`;
-    boxEl.style.minHeight = `${box.height}px`;
-    await renderBoxContent(app, file, box.linkTarget, boxEl, component, ancestors);
+  if (swapped.length > 0) {
+    await waitForDomStability(container);
+    growToFitOverflow(svg, swapped);
   }
 }
-async function renderBoxContent(app, file, linkTarget, boxEl, component, ancestors) {
+async function renderEmbedBox(app, file, linkTarget, foreignObject, component, ancestors) {
   var _a;
-  if (linkTarget === null) {
-    placeholder(boxEl, "(not a note embed)");
-    return;
-  }
   const target = app.metadataCache.getFirstLinkpathDest(linkTarget, file.path);
   if (target === null) {
-    placeholder(boxEl, `Missing note: ${linkTarget}`);
-    return;
+    replaceForeignObjectContent(foreignObject, (wrapper2) => placeholder(wrapper2, `Missing note: ${linkTarget}`));
+    return true;
   }
   if (ancestors.has(target.path)) {
-    placeholder(boxEl, `Circular embed skipped: ${linkTarget}`);
-    return;
+    replaceForeignObjectContent(
+      foreignObject,
+      (wrapper2) => placeholder(wrapper2, `Circular embed skipped: ${linkTarget}`)
+    );
+    return true;
   }
-  const targetMarkdown = await app.vault.cachedRead(target);
-  const targetFrontmatter = (_a = app.metadataCache.getFileCache(target)) == null ? void 0 : _a.frontmatter;
   const nextAncestors = new Set(ancestors);
   nextAncestors.add(target.path);
+  const targetFrontmatter = (_a = app.metadataCache.getFileCache(target)) == null ? void 0 : _a.frontmatter;
   if (isExcalidrawNote(targetFrontmatter)) {
-    await renderExcalidrawBoard(app, target, targetMarkdown, boxEl, component, nextAncestors);
-    return;
+    const wrapper2 = replaceForeignObjectContent(foreignObject, () => void 0);
+    await renderExcalidrawBoard(app, target, wrapper2, component, nextAncestors);
+    return true;
   }
-  await import_obsidian2.MarkdownRenderer.render(app, targetMarkdown, boxEl, target.path, component);
+  const targetMarkdown = await app.vault.cachedRead(target);
+  const wrapper = replaceForeignObjectContent(foreignObject, () => void 0);
+  await import_obsidian2.MarkdownRenderer.render(app, targetMarkdown, wrapper, target.path, component);
+  return true;
+}
+function replaceForeignObjectContent(foreignObject, fill2) {
+  while (foreignObject.firstChild !== null) foreignObject.removeChild(foreignObject.firstChild);
+  foreignObject.setCssStyles({ overflow: "visible" });
+  const wrapper = activeDocument.createElement("div");
+  wrapper.className = EMBED_CONTENT_CLASS;
+  foreignObject.appendChild(wrapper);
+  fill2(wrapper);
+  return wrapper;
+}
+function hideLinkLabel(anchor) {
+  for (const child of Array.from(anchor.children)) {
+    if (child.tagName.toLowerCase() !== "g") continue;
+    if (child.querySelector("foreignObject") !== null) continue;
+    if (child.querySelector("text") !== null) child.setCssStyles({ display: "none" });
+  }
+}
+function growToFitOverflow(svg, swapped) {
+  var _a, _b, _c, _d;
+  let maxOverflow = 0;
+  for (const box of swapped) {
+    const contentHeight = (_b = (_a = box.foreignObject.firstElementChild) == null ? void 0 : _a.getBoundingClientRect().height) != null ? _b : 0;
+    maxOverflow = Math.max(maxOverflow, contentHeight - box.declaredHeight);
+  }
+  if (maxOverflow <= 0) return;
+  const currentHeight = parseFloat((_c = svg.getAttribute("height")) != null ? _c : "0");
+  if (currentHeight > 0) svg.setAttribute("height", `${currentHeight + maxOverflow}`);
+  const viewBox = svg.getAttribute("viewBox");
+  const parts = (_d = viewBox == null ? void 0 : viewBox.split(/\s+/).map(Number)) != null ? _d : [];
+  if (parts.length === 4) {
+    const [minX, minY, width, height] = parts;
+    svg.setAttribute("viewBox", `${minX} ${minY} ${width} ${height + maxOverflow}`);
+  }
+}
+function anchorHref(anchor) {
+  var _a;
+  const href = (_a = anchor.getAttribute("href")) != null ? _a : anchor.getAttributeNS("http://www.w3.org/1999/xlink", "href");
+  return href !== null && href.startsWith("obsidian://") ? href : null;
 }
 function placeholder(container, text) {
-  container.createEl("p", { cls: PLACEHOLDER_CLASS, text });
+  const el = activeDocument.createElement("p");
+  el.className = PLACEHOLDER_CLASS;
+  el.textContent = text;
+  container.appendChild(el);
 }
 function errorMessage(error2) {
   return error2 instanceof Error ? error2.message : String(error2);
@@ -56336,9 +55931,6 @@ function errorMessage(error2) {
 
 // src/shell/render.ts
 var RENDER_HOST_CLASS = "mx-render-host";
-var STABILITY_POLL_MS = 60;
-var STABILITY_SAMPLES = 3;
-var STABILITY_TIMEOUT_MS = 15e3;
 var ObsidianDocumentRenderer = class {
   constructor(app, host) {
     this.app = app;
@@ -56349,14 +55941,14 @@ var ObsidianDocumentRenderer = class {
     var _a, _b;
     const file = this.app.vault.getAbstractFileByPath(sourcePath);
     if (!(file instanceof import_obsidian3.TFile)) throw new Error(`Not a note: ${sourcePath}`);
-    const markdown = await this.app.vault.cachedRead(file);
     const container = this.host.createDiv({ cls: RENDER_HOST_CLASS });
     const component = new import_obsidian3.Component();
     component.load();
     const frontmatter = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
     if (isExcalidrawNote(frontmatter)) {
-      await renderExcalidrawBoard(this.app, file, markdown, container, component, /* @__PURE__ */ new Set([sourcePath]));
+      await renderExcalidrawBoard(this.app, file, container, component, /* @__PURE__ */ new Set([sourcePath]));
     } else {
+      const markdown = await this.app.vault.cachedRead(file);
       await import_obsidian3.MarkdownRenderer.render(this.app, markdown, container, sourcePath, component);
     }
     await waitForDomStability(container);
@@ -56381,26 +55973,6 @@ var ObsidianDocumentRenderer = class {
     (_a = root.detach) == null ? void 0 : _a.call(root);
   }
 };
-async function waitForDomStability(element, options = {}) {
-  var _a, _b, _c;
-  const pollMs = (_a = options.pollMs) != null ? _a : STABILITY_POLL_MS;
-  const required = (_b = options.samples) != null ? _b : STABILITY_SAMPLES;
-  const timeoutMs = (_c = options.timeoutMs) != null ? _c : STABILITY_TIMEOUT_MS;
-  const started = Date.now();
-  let previous = signature(element);
-  let stable = 0;
-  while (stable < required) {
-    if (Date.now() - started > timeoutMs) return;
-    await sleep(pollMs);
-    const current = signature(element);
-    if (current === previous) {
-      stable++;
-    } else {
-      stable = 0;
-      previous = current;
-    }
-  }
-}
 function normalizeCssClasses(value) {
   const entries = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
   const classes = [];
@@ -56411,12 +55983,6 @@ function normalizeCssClasses(value) {
     }
   }
   return classes;
-}
-function signature(element) {
-  return `${element.innerHTML.length}:${element.querySelectorAll("*").length}`;
-}
-function sleep(ms) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 // src/shell/squeezer.ts

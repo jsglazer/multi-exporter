@@ -2,6 +2,7 @@ import { Component, MarkdownRenderer, TFile } from 'obsidian';
 import type { App } from 'obsidian';
 import { isExcalidrawNote } from '../core/excalidraw';
 import type { DocumentRenderer, RenderedNote } from '../core/pipeline';
+import { waitForDomStability } from './dom-stability';
 import { renderExcalidrawBoard } from './excalidraw-render';
 
 /**
@@ -15,13 +16,6 @@ import { renderExcalidrawBoard } from './excalidraw-render';
 
 const RENDER_HOST_CLASS = 'mx-render-host';
 
-/** Interval between DOM-stability samples while waiting for async renderers to settle. */
-const STABILITY_POLL_MS = 60;
-/** Consecutive unchanged samples required before a document is considered settled. */
-const STABILITY_SAMPLES = 3;
-/** Hard ceiling, so a permanently-reactive Datacore view cannot hang an export. */
-const STABILITY_TIMEOUT_MS = 15000;
-
 export class ObsidianDocumentRenderer implements DocumentRenderer {
 	private readonly components = new WeakMap<object, Component>();
 
@@ -34,7 +28,6 @@ export class ObsidianDocumentRenderer implements DocumentRenderer {
 		const file = this.app.vault.getAbstractFileByPath(sourcePath);
 		if (!(file instanceof TFile)) throw new Error(`Not a note: ${sourcePath}`);
 
-		const markdown = await this.app.vault.cachedRead(file);
 		const container = this.host.createDiv({ cls: RENDER_HOST_CLASS });
 		const component = new Component();
 		component.load();
@@ -42,10 +35,11 @@ export class ObsidianDocumentRenderer implements DocumentRenderer {
 		const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
 		if (isExcalidrawNote(frontmatter)) {
 			// An .excalidraw.md file's own markdown is just the plugin's save-format scaffold;
-			// the canvas it actually draws lives in a compressed blob MarkdownRenderer never
-			// sees. See `core/excalidraw.ts` for why this note type needs its own path.
-			await renderExcalidrawBoard(this.app, file, markdown, container, component, new Set([sourcePath]));
+			// the canvas it actually draws is rendered by Excalidraw's own API instead. See
+			// `core/excalidraw.ts` for why this note type needs its own path.
+			await renderExcalidrawBoard(this.app, file, container, component, new Set([sourcePath]));
 		} else {
+			const markdown = await this.app.vault.cachedRead(file);
 			await MarkdownRenderer.render(this.app, markdown, container, sourcePath, component);
 		}
 		// Dataview and Datacore render asynchronously and reactively, so the DOM is not
@@ -76,38 +70,6 @@ export class ObsidianDocumentRenderer implements DocumentRenderer {
 }
 
 /**
- * Wait until a subtree stops changing.
- *
- * Measured by HTML length and node count rather than by a `MutationObserver`, which would
- * have to be torn down on every path out and is one more live handle to leak. Sampling is
- * cheap here because it runs once per note, not once per keystroke.
- */
-export async function waitForDomStability(
-	element: HTMLElement,
-	options: { pollMs?: number; samples?: number; timeoutMs?: number } = {},
-): Promise<void> {
-	const pollMs = options.pollMs ?? STABILITY_POLL_MS;
-	const required = options.samples ?? STABILITY_SAMPLES;
-	const timeoutMs = options.timeoutMs ?? STABILITY_TIMEOUT_MS;
-
-	const started = Date.now();
-	let previous = signature(element);
-	let stable = 0;
-
-	while (stable < required) {
-		if (Date.now() - started > timeoutMs) return;
-		await sleep(pollMs);
-		const current = signature(element);
-		if (current === previous) {
-			stable++;
-		} else {
-			stable = 0;
-			previous = current;
-		}
-	}
-}
-
-/**
  * `cssclasses` frontmatter, however the user wrote it: a single string, a list of strings, or
  * a string with more than one class in it — Obsidian's own reading view accepts all three.
  */
@@ -121,12 +83,4 @@ export function normalizeCssClasses(value: unknown): string[] {
 		}
 	}
 	return classes;
-}
-
-function signature(element: HTMLElement): string {
-	return `${element.innerHTML.length}:${element.querySelectorAll('*').length}`;
-}
-
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => window.setTimeout(resolve, ms));
 }

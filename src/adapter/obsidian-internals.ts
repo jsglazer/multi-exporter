@@ -18,6 +18,7 @@ import type { AnnotationCategoryColor, AnnotationCategoryColors, AnnotationStrip
  * | Chromium | 142.0.7444.265 | embedded version string |
  * | `zotero-manager` | API `version: 1` (plugin v1.1.9) | `src/api.ts`, read 2026-08-17 |
  * | `md-annotation` | v1.0.22, public `api` | `src/api.ts`, read 2026-08-29 |
+ * | `obsidian-excalidraw-plugin` | v2.27.3, public `window.ExcalidrawAutomate.createSVG` | `main.js`, read 2026-09-12 |
  *
  * The audit named no Obsidian internal beyond these; in particular it specified no file
  * explorer access, so none is taken.
@@ -70,6 +71,42 @@ export function getPluginStringSetting(app: App, pluginId: string, key: string):
 	if (settings === undefined) return null;
 	const value = settings[key];
 	return typeof value === 'string' ? value : null;
+}
+
+/* ---------------------------------------------------------------------- excalidraw -- */
+
+export const EXCALIDRAW_PLUGIN_ID = 'obsidian-excalidraw-plugin';
+
+/** The slice of `ExcalidrawAutomate` this plugin calls, mirrored from its published API docs. */
+interface ExcalidrawAutomateApi {
+	createSVG(
+		templatePath?: string,
+		embedFont?: boolean,
+		exportSettings?: unknown,
+		loader?: unknown,
+		theme?: string,
+		padding?: number,
+	): Promise<SVGSVGElement>;
+}
+
+function asExcalidrawAutomateApi(candidate: unknown): ExcalidrawAutomateApi | null {
+	if (candidate === null || typeof candidate !== 'object') return null;
+	const api = candidate as Partial<ExcalidrawAutomateApi>;
+	return typeof api.createSVG === 'function' ? (api as ExcalidrawAutomateApi) : null;
+}
+
+/**
+ * Excalidraw's own scene renderer.
+ *
+ * Exposed as a bare `window.ExcalidrawAutomate` global rather than through the plugin
+ * registry's `api` field `getPluginApi` reads — this is the same public surface a
+ * Templater or QuickAdd script uses to render a drawing, not a private object reached into
+ * for the first time here. Still gated on the plugin being enabled, since a global can
+ * outlive its plugin being disabled within the same window session.
+ */
+export function getExcalidrawAutomate(app: App): ExcalidrawAutomateApi | null {
+	if (!isPluginEnabled(app, EXCALIDRAW_PLUGIN_ID)) return null;
+	return asExcalidrawAutomateApi((window as unknown as { ExcalidrawAutomate?: unknown }).ExcalidrawAutomate);
 }
 
 /* ------------------------------------------------------------------- md-annotation -- */
