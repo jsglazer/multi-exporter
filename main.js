@@ -4257,13 +4257,469 @@ var require_pako = __commonJS({
   }
 });
 
+// node_modules/lz-string/libs/lz-string.js
+var require_lz_string = __commonJS({
+  "node_modules/lz-string/libs/lz-string.js"(exports, module2) {
+    var LZString = (function() {
+      var f = String.fromCharCode;
+      var keyStrBase64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+      var keyStrUriSafe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-$";
+      var baseReverseDic = {};
+      function getBaseValue(alphabet, character) {
+        if (!baseReverseDic[alphabet]) {
+          baseReverseDic[alphabet] = {};
+          for (var i3 = 0; i3 < alphabet.length; i3++) {
+            baseReverseDic[alphabet][alphabet.charAt(i3)] = i3;
+          }
+        }
+        return baseReverseDic[alphabet][character];
+      }
+      var LZString2 = {
+        compressToBase64: function(input) {
+          if (input == null) return "";
+          var res = LZString2._compress(input, 6, function(a) {
+            return keyStrBase64.charAt(a);
+          });
+          switch (res.length % 4) {
+            // To produce valid Base64
+            default:
+            // When could this happen ?
+            case 0:
+              return res;
+            case 1:
+              return res + "===";
+            case 2:
+              return res + "==";
+            case 3:
+              return res + "=";
+          }
+        },
+        decompressFromBase64: function(input) {
+          if (input == null) return "";
+          if (input == "") return null;
+          return LZString2._decompress(input.length, 32, function(index) {
+            return getBaseValue(keyStrBase64, input.charAt(index));
+          });
+        },
+        compressToUTF16: function(input) {
+          if (input == null) return "";
+          return LZString2._compress(input, 15, function(a) {
+            return f(a + 32);
+          }) + " ";
+        },
+        decompressFromUTF16: function(compressed) {
+          if (compressed == null) return "";
+          if (compressed == "") return null;
+          return LZString2._decompress(compressed.length, 16384, function(index) {
+            return compressed.charCodeAt(index) - 32;
+          });
+        },
+        //compress into uint8array (UCS-2 big endian format)
+        compressToUint8Array: function(uncompressed) {
+          var compressed = LZString2.compress(uncompressed);
+          var buf = new Uint8Array(compressed.length * 2);
+          for (var i3 = 0, TotalLen = compressed.length; i3 < TotalLen; i3++) {
+            var current_value = compressed.charCodeAt(i3);
+            buf[i3 * 2] = current_value >>> 8;
+            buf[i3 * 2 + 1] = current_value % 256;
+          }
+          return buf;
+        },
+        //decompress from uint8array (UCS-2 big endian format)
+        decompressFromUint8Array: function(compressed) {
+          if (compressed === null || compressed === void 0) {
+            return LZString2.decompress(compressed);
+          } else {
+            var buf = new Array(compressed.length / 2);
+            for (var i3 = 0, TotalLen = buf.length; i3 < TotalLen; i3++) {
+              buf[i3] = compressed[i3 * 2] * 256 + compressed[i3 * 2 + 1];
+            }
+            var result = [];
+            buf.forEach(function(c) {
+              result.push(f(c));
+            });
+            return LZString2.decompress(result.join(""));
+          }
+        },
+        //compress into a string that is already URI encoded
+        compressToEncodedURIComponent: function(input) {
+          if (input == null) return "";
+          return LZString2._compress(input, 6, function(a) {
+            return keyStrUriSafe.charAt(a);
+          });
+        },
+        //decompress from an output of compressToEncodedURIComponent
+        decompressFromEncodedURIComponent: function(input) {
+          if (input == null) return "";
+          if (input == "") return null;
+          input = input.replace(/ /g, "+");
+          return LZString2._decompress(input.length, 32, function(index) {
+            return getBaseValue(keyStrUriSafe, input.charAt(index));
+          });
+        },
+        compress: function(uncompressed) {
+          return LZString2._compress(uncompressed, 16, function(a) {
+            return f(a);
+          });
+        },
+        _compress: function(uncompressed, bitsPerChar, getCharFromInt) {
+          if (uncompressed == null) return "";
+          var i3, value, context_dictionary = {}, context_dictionaryToCreate = {}, context_c = "", context_wc = "", context_w = "", context_enlargeIn = 2, context_dictSize = 3, context_numBits = 2, context_data = [], context_data_val = 0, context_data_position = 0, ii;
+          for (ii = 0; ii < uncompressed.length; ii += 1) {
+            context_c = uncompressed.charAt(ii);
+            if (!Object.prototype.hasOwnProperty.call(context_dictionary, context_c)) {
+              context_dictionary[context_c] = context_dictSize++;
+              context_dictionaryToCreate[context_c] = true;
+            }
+            context_wc = context_w + context_c;
+            if (Object.prototype.hasOwnProperty.call(context_dictionary, context_wc)) {
+              context_w = context_wc;
+            } else {
+              if (Object.prototype.hasOwnProperty.call(context_dictionaryToCreate, context_w)) {
+                if (context_w.charCodeAt(0) < 256) {
+                  for (i3 = 0; i3 < context_numBits; i3++) {
+                    context_data_val = context_data_val << 1;
+                    if (context_data_position == bitsPerChar - 1) {
+                      context_data_position = 0;
+                      context_data.push(getCharFromInt(context_data_val));
+                      context_data_val = 0;
+                    } else {
+                      context_data_position++;
+                    }
+                  }
+                  value = context_w.charCodeAt(0);
+                  for (i3 = 0; i3 < 8; i3++) {
+                    context_data_val = context_data_val << 1 | value & 1;
+                    if (context_data_position == bitsPerChar - 1) {
+                      context_data_position = 0;
+                      context_data.push(getCharFromInt(context_data_val));
+                      context_data_val = 0;
+                    } else {
+                      context_data_position++;
+                    }
+                    value = value >> 1;
+                  }
+                } else {
+                  value = 1;
+                  for (i3 = 0; i3 < context_numBits; i3++) {
+                    context_data_val = context_data_val << 1 | value;
+                    if (context_data_position == bitsPerChar - 1) {
+                      context_data_position = 0;
+                      context_data.push(getCharFromInt(context_data_val));
+                      context_data_val = 0;
+                    } else {
+                      context_data_position++;
+                    }
+                    value = 0;
+                  }
+                  value = context_w.charCodeAt(0);
+                  for (i3 = 0; i3 < 16; i3++) {
+                    context_data_val = context_data_val << 1 | value & 1;
+                    if (context_data_position == bitsPerChar - 1) {
+                      context_data_position = 0;
+                      context_data.push(getCharFromInt(context_data_val));
+                      context_data_val = 0;
+                    } else {
+                      context_data_position++;
+                    }
+                    value = value >> 1;
+                  }
+                }
+                context_enlargeIn--;
+                if (context_enlargeIn == 0) {
+                  context_enlargeIn = Math.pow(2, context_numBits);
+                  context_numBits++;
+                }
+                delete context_dictionaryToCreate[context_w];
+              } else {
+                value = context_dictionary[context_w];
+                for (i3 = 0; i3 < context_numBits; i3++) {
+                  context_data_val = context_data_val << 1 | value & 1;
+                  if (context_data_position == bitsPerChar - 1) {
+                    context_data_position = 0;
+                    context_data.push(getCharFromInt(context_data_val));
+                    context_data_val = 0;
+                  } else {
+                    context_data_position++;
+                  }
+                  value = value >> 1;
+                }
+              }
+              context_enlargeIn--;
+              if (context_enlargeIn == 0) {
+                context_enlargeIn = Math.pow(2, context_numBits);
+                context_numBits++;
+              }
+              context_dictionary[context_wc] = context_dictSize++;
+              context_w = String(context_c);
+            }
+          }
+          if (context_w !== "") {
+            if (Object.prototype.hasOwnProperty.call(context_dictionaryToCreate, context_w)) {
+              if (context_w.charCodeAt(0) < 256) {
+                for (i3 = 0; i3 < context_numBits; i3++) {
+                  context_data_val = context_data_val << 1;
+                  if (context_data_position == bitsPerChar - 1) {
+                    context_data_position = 0;
+                    context_data.push(getCharFromInt(context_data_val));
+                    context_data_val = 0;
+                  } else {
+                    context_data_position++;
+                  }
+                }
+                value = context_w.charCodeAt(0);
+                for (i3 = 0; i3 < 8; i3++) {
+                  context_data_val = context_data_val << 1 | value & 1;
+                  if (context_data_position == bitsPerChar - 1) {
+                    context_data_position = 0;
+                    context_data.push(getCharFromInt(context_data_val));
+                    context_data_val = 0;
+                  } else {
+                    context_data_position++;
+                  }
+                  value = value >> 1;
+                }
+              } else {
+                value = 1;
+                for (i3 = 0; i3 < context_numBits; i3++) {
+                  context_data_val = context_data_val << 1 | value;
+                  if (context_data_position == bitsPerChar - 1) {
+                    context_data_position = 0;
+                    context_data.push(getCharFromInt(context_data_val));
+                    context_data_val = 0;
+                  } else {
+                    context_data_position++;
+                  }
+                  value = 0;
+                }
+                value = context_w.charCodeAt(0);
+                for (i3 = 0; i3 < 16; i3++) {
+                  context_data_val = context_data_val << 1 | value & 1;
+                  if (context_data_position == bitsPerChar - 1) {
+                    context_data_position = 0;
+                    context_data.push(getCharFromInt(context_data_val));
+                    context_data_val = 0;
+                  } else {
+                    context_data_position++;
+                  }
+                  value = value >> 1;
+                }
+              }
+              context_enlargeIn--;
+              if (context_enlargeIn == 0) {
+                context_enlargeIn = Math.pow(2, context_numBits);
+                context_numBits++;
+              }
+              delete context_dictionaryToCreate[context_w];
+            } else {
+              value = context_dictionary[context_w];
+              for (i3 = 0; i3 < context_numBits; i3++) {
+                context_data_val = context_data_val << 1 | value & 1;
+                if (context_data_position == bitsPerChar - 1) {
+                  context_data_position = 0;
+                  context_data.push(getCharFromInt(context_data_val));
+                  context_data_val = 0;
+                } else {
+                  context_data_position++;
+                }
+                value = value >> 1;
+              }
+            }
+            context_enlargeIn--;
+            if (context_enlargeIn == 0) {
+              context_enlargeIn = Math.pow(2, context_numBits);
+              context_numBits++;
+            }
+          }
+          value = 2;
+          for (i3 = 0; i3 < context_numBits; i3++) {
+            context_data_val = context_data_val << 1 | value & 1;
+            if (context_data_position == bitsPerChar - 1) {
+              context_data_position = 0;
+              context_data.push(getCharFromInt(context_data_val));
+              context_data_val = 0;
+            } else {
+              context_data_position++;
+            }
+            value = value >> 1;
+          }
+          while (true) {
+            context_data_val = context_data_val << 1;
+            if (context_data_position == bitsPerChar - 1) {
+              context_data.push(getCharFromInt(context_data_val));
+              break;
+            } else context_data_position++;
+          }
+          return context_data.join("");
+        },
+        decompress: function(compressed) {
+          if (compressed == null) return "";
+          if (compressed == "") return null;
+          return LZString2._decompress(compressed.length, 32768, function(index) {
+            return compressed.charCodeAt(index);
+          });
+        },
+        _decompress: function(length, resetValue, getNextValue) {
+          var dictionary = [], next, enlargeIn = 4, dictSize = 4, numBits = 3, entry = "", result = [], i3, w, bits, resb, maxpower, power, c, data = { val: getNextValue(0), position: resetValue, index: 1 };
+          for (i3 = 0; i3 < 3; i3 += 1) {
+            dictionary[i3] = i3;
+          }
+          bits = 0;
+          maxpower = Math.pow(2, 2);
+          power = 1;
+          while (power != maxpower) {
+            resb = data.val & data.position;
+            data.position >>= 1;
+            if (data.position == 0) {
+              data.position = resetValue;
+              data.val = getNextValue(data.index++);
+            }
+            bits |= (resb > 0 ? 1 : 0) * power;
+            power <<= 1;
+          }
+          switch (next = bits) {
+            case 0:
+              bits = 0;
+              maxpower = Math.pow(2, 8);
+              power = 1;
+              while (power != maxpower) {
+                resb = data.val & data.position;
+                data.position >>= 1;
+                if (data.position == 0) {
+                  data.position = resetValue;
+                  data.val = getNextValue(data.index++);
+                }
+                bits |= (resb > 0 ? 1 : 0) * power;
+                power <<= 1;
+              }
+              c = f(bits);
+              break;
+            case 1:
+              bits = 0;
+              maxpower = Math.pow(2, 16);
+              power = 1;
+              while (power != maxpower) {
+                resb = data.val & data.position;
+                data.position >>= 1;
+                if (data.position == 0) {
+                  data.position = resetValue;
+                  data.val = getNextValue(data.index++);
+                }
+                bits |= (resb > 0 ? 1 : 0) * power;
+                power <<= 1;
+              }
+              c = f(bits);
+              break;
+            case 2:
+              return "";
+          }
+          dictionary[3] = c;
+          w = c;
+          result.push(c);
+          while (true) {
+            if (data.index > length) {
+              return "";
+            }
+            bits = 0;
+            maxpower = Math.pow(2, numBits);
+            power = 1;
+            while (power != maxpower) {
+              resb = data.val & data.position;
+              data.position >>= 1;
+              if (data.position == 0) {
+                data.position = resetValue;
+                data.val = getNextValue(data.index++);
+              }
+              bits |= (resb > 0 ? 1 : 0) * power;
+              power <<= 1;
+            }
+            switch (c = bits) {
+              case 0:
+                bits = 0;
+                maxpower = Math.pow(2, 8);
+                power = 1;
+                while (power != maxpower) {
+                  resb = data.val & data.position;
+                  data.position >>= 1;
+                  if (data.position == 0) {
+                    data.position = resetValue;
+                    data.val = getNextValue(data.index++);
+                  }
+                  bits |= (resb > 0 ? 1 : 0) * power;
+                  power <<= 1;
+                }
+                dictionary[dictSize++] = f(bits);
+                c = dictSize - 1;
+                enlargeIn--;
+                break;
+              case 1:
+                bits = 0;
+                maxpower = Math.pow(2, 16);
+                power = 1;
+                while (power != maxpower) {
+                  resb = data.val & data.position;
+                  data.position >>= 1;
+                  if (data.position == 0) {
+                    data.position = resetValue;
+                    data.val = getNextValue(data.index++);
+                  }
+                  bits |= (resb > 0 ? 1 : 0) * power;
+                  power <<= 1;
+                }
+                dictionary[dictSize++] = f(bits);
+                c = dictSize - 1;
+                enlargeIn--;
+                break;
+              case 2:
+                return result.join("");
+            }
+            if (enlargeIn == 0) {
+              enlargeIn = Math.pow(2, numBits);
+              numBits++;
+            }
+            if (dictionary[c]) {
+              entry = dictionary[c];
+            } else {
+              if (c === dictSize) {
+                entry = w + w.charAt(0);
+              } else {
+                return null;
+              }
+            }
+            result.push(entry);
+            dictionary[dictSize++] = w + entry.charAt(0);
+            enlargeIn--;
+            w = entry;
+            if (enlargeIn == 0) {
+              enlargeIn = Math.pow(2, numBits);
+              numBits++;
+            }
+          }
+        }
+      };
+      return LZString2;
+    })();
+    if (typeof define === "function" && define.amd) {
+      define(function() {
+        return LZString;
+      });
+    } else if (typeof module2 !== "undefined" && module2 != null) {
+      module2.exports = LZString;
+    } else if (typeof angular !== "undefined" && angular != null) {
+      angular.module("LZString", []).factory("LZString", function() {
+        return LZString;
+      });
+    }
+  }
+});
+
 // src/main.ts
 var main_exports = {};
 __export(main_exports, {
   default: () => MultiExporterPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian9 = require("obsidian");
+var import_obsidian10 = require("obsidian");
 
 // src/core/paths.ts
 function normalizePath(input) {
@@ -4415,6 +4871,15 @@ mjx-container svg { max-width: 100%; height: auto; }
    the reference, on paper they are a row of blue \u21A9 glyphs after every note with nothing to
    click. The footnote text itself is kept \u2014 only the backlink goes. */
 .footnote-backref { display: none; }
+
+/* An Excalidraw board of note embeds (see shell/excalidraw-render.ts): each box is placed at
+   its own canvas position, sized to at least the canvas box but free to grow taller for
+   content that would not otherwise fit \u2014 clipping it would silently drop text, so instead
+   the whole board relies on the profile's own "fit to page" to shrink it back down, the same
+   as any other oversized element. */
+.mx-excalidraw-board { position: relative; }
+.mx-excalidraw-box { position: absolute; box-sizing: border-box; overflow: visible; border: 1px solid currentColor; padding: 4px; }
+.mx-excalidraw-placeholder { font-style: italic; opacity: 0.7; }
 
 /* Running-head source. The wrapper carries the note name and the export timestamp so a
    margin box can name them; it takes no space and prints nothing itself. Sized to zero
@@ -4921,7 +5386,7 @@ function removeFolderPaths(map, deletedPath) {
 }
 
 // src/shell/export-service.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 
 // src/adapter/obsidian-internals.ts
 function pluginRegistry(app) {
@@ -55745,7 +56210,131 @@ var PdfLibOutlineInjector = class {
 };
 
 // src/shell/render.ts
+var import_obsidian3 = require("obsidian");
+
+// src/core/excalidraw.ts
+var import_lz_string = __toESM(require_lz_string(), 1);
+function isExcalidrawNote(frontmatter) {
+  return (frontmatter == null ? void 0 : frontmatter["excalidraw-plugin"]) === "parsed" || (frontmatter == null ? void 0 : frontmatter["excalidraw-plugin"]) === "raw";
+}
+function extractSceneSource(markdown) {
+  var _a;
+  const match = /```(compressed-json|json)\r?\n([\s\S]*?)```/.exec(markdown);
+  if (match === null) return null;
+  const kind = match[1];
+  const body = (_a = match[2]) != null ? _a : "";
+  return { compressed: kind === "compressed-json", body: body.trim() };
+}
+function parseExcalidrawScene(source) {
+  const json = source.compressed ? (0, import_lz_string.decompressFromBase64)(source.body.replace(/\s+/g, "")) : source.body;
+  if (json === null || json === "") {
+    throw new Error("Excalidraw scene data could not be decompressed.");
+  }
+  const parsed = JSON.parse(json);
+  if (typeof parsed !== "object" || parsed === null || !Array.isArray(parsed.elements)) {
+    throw new Error("Excalidraw scene JSON did not have the expected shape.");
+  }
+  return { elements: parsed.elements };
+}
+function resolveEmbedLinkTarget(link) {
+  var _a, _b;
+  if (link === null || link === void 0 || link === "") return null;
+  const wikilink = /^\[\[([^\]|#]+)/.exec(link);
+  if (wikilink !== null) return (_b = (_a = wikilink[1]) == null ? void 0 : _a.trim()) != null ? _b : null;
+  try {
+    const url = new URL(link);
+    if (url.protocol !== "obsidian:") return null;
+    const file = url.searchParams.get("file");
+    return file === null ? null : decodeURIComponent(file).replace(/\.md$/, "");
+  } catch (e) {
+    return null;
+  }
+}
+function computeBoardLayout(scene) {
+  const embeddables = scene.elements.filter((element) => element.isDeleted !== true && element.type === "embeddable");
+  if (embeddables.length === 0) return { width: 0, height: 0, boxes: [] };
+  const minX = Math.min(...embeddables.map((element) => element.x));
+  const minY = Math.min(...embeddables.map((element) => element.y));
+  const maxX = Math.max(...embeddables.map((element) => element.x + element.width));
+  const maxY = Math.max(...embeddables.map((element) => element.y + element.height));
+  const boxes = embeddables.map((element) => ({
+    id: element.id,
+    x: element.x - minX,
+    y: element.y - minY,
+    width: element.width,
+    height: element.height,
+    linkTarget: resolveEmbedLinkTarget(element.link)
+  }));
+  return { width: maxX - minX, height: maxY - minY, boxes };
+}
+
+// src/shell/excalidraw-render.ts
 var import_obsidian2 = require("obsidian");
+var BOARD_CLASS = "mx-excalidraw-board";
+var BOX_CLASS = "mx-excalidraw-box";
+var PLACEHOLDER_CLASS = "mx-excalidraw-placeholder";
+async function renderExcalidrawBoard(app, file, markdown, container, component, ancestors) {
+  const source = extractSceneSource(markdown);
+  if (source === null) {
+    placeholder(container, "This Excalidraw drawing has no scene data to render.");
+    return;
+  }
+  let layout;
+  try {
+    layout = computeBoardLayout(parseExcalidrawScene(source));
+  } catch (error2) {
+    placeholder(container, `This Excalidraw drawing could not be read: ${errorMessage(error2)}`);
+    return;
+  }
+  if (layout.boxes.length === 0) {
+    placeholder(container, "This Excalidraw drawing has no embedded notes to render.");
+    return;
+  }
+  const board = container.createDiv({ cls: BOARD_CLASS });
+  board.style.width = `${layout.width}px`;
+  board.style.minHeight = `${layout.height}px`;
+  for (const box of layout.boxes) {
+    const boxEl = board.createDiv({ cls: BOX_CLASS });
+    boxEl.style.left = `${box.x}px`;
+    boxEl.style.top = `${box.y}px`;
+    boxEl.style.width = `${box.width}px`;
+    boxEl.style.minHeight = `${box.height}px`;
+    await renderBoxContent(app, file, box.linkTarget, boxEl, component, ancestors);
+  }
+}
+async function renderBoxContent(app, file, linkTarget, boxEl, component, ancestors) {
+  var _a;
+  if (linkTarget === null) {
+    placeholder(boxEl, "(not a note embed)");
+    return;
+  }
+  const target = app.metadataCache.getFirstLinkpathDest(linkTarget, file.path);
+  if (target === null) {
+    placeholder(boxEl, `Missing note: ${linkTarget}`);
+    return;
+  }
+  if (ancestors.has(target.path)) {
+    placeholder(boxEl, `Circular embed skipped: ${linkTarget}`);
+    return;
+  }
+  const targetMarkdown = await app.vault.cachedRead(target);
+  const targetFrontmatter = (_a = app.metadataCache.getFileCache(target)) == null ? void 0 : _a.frontmatter;
+  const nextAncestors = new Set(ancestors);
+  nextAncestors.add(target.path);
+  if (isExcalidrawNote(targetFrontmatter)) {
+    await renderExcalidrawBoard(app, target, targetMarkdown, boxEl, component, nextAncestors);
+    return;
+  }
+  await import_obsidian2.MarkdownRenderer.render(app, targetMarkdown, boxEl, target.path, component);
+}
+function placeholder(container, text) {
+  container.createEl("p", { cls: PLACEHOLDER_CLASS, text });
+}
+function errorMessage(error2) {
+  return error2 instanceof Error ? error2.message : String(error2);
+}
+
+// src/shell/render.ts
 var RENDER_HOST_CLASS = "mx-render-host";
 var STABILITY_POLL_MS = 60;
 var STABILITY_SAMPLES = 3;
@@ -55759,14 +56348,18 @@ var ObsidianDocumentRenderer = class {
   async render(sourcePath) {
     var _a, _b;
     const file = this.app.vault.getAbstractFileByPath(sourcePath);
-    if (!(file instanceof import_obsidian2.TFile)) throw new Error(`Not a note: ${sourcePath}`);
+    if (!(file instanceof import_obsidian3.TFile)) throw new Error(`Not a note: ${sourcePath}`);
     const markdown = await this.app.vault.cachedRead(file);
     const container = this.host.createDiv({ cls: RENDER_HOST_CLASS });
-    const component = new import_obsidian2.Component();
+    const component = new import_obsidian3.Component();
     component.load();
-    await import_obsidian2.MarkdownRenderer.render(this.app, markdown, container, sourcePath, component);
-    await waitForDomStability(container);
     const frontmatter = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
+    if (isExcalidrawNote(frontmatter)) {
+      await renderExcalidrawBoard(this.app, file, markdown, container, component, /* @__PURE__ */ new Set([sourcePath]));
+    } else {
+      await import_obsidian3.MarkdownRenderer.render(this.app, markdown, container, sourcePath, component);
+    }
+    await waitForDomStability(container);
     const cssClasses = normalizeCssClasses((_b = frontmatter == null ? void 0 : frontmatter["cssclasses"]) != null ? _b : frontmatter == null ? void 0 : frontmatter["cssclass"]);
     const note = {
       sourcePath,
@@ -55853,7 +56446,7 @@ function run(command, args, timeoutMs) {
 }
 
 // src/shell/transforms.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 var CITATION_CLASS = "mx-citation";
 var BIBLIOGRAPHY_CLASS = "mx-bibliography";
 var ENDNOTES_CLASS = "mx-endnotes";
@@ -55952,7 +56545,7 @@ var DomTransforms = class {
     const root = note.root;
     const section = root.createDiv({ cls: BIBLIOGRAPHY_CLASS });
     section.createEl("h2", { text: "Bibliography" });
-    section.createDiv().appendChild((0, import_obsidian3.sanitizeHTMLToDom)(html));
+    section.createDiv().appendChild((0, import_obsidian4.sanitizeHTMLToDom)(html));
   }
   serialize(note) {
     return note.root.innerHTML;
@@ -56239,14 +56832,14 @@ var ExportService = class {
 };
 function announceOutcome(outcome) {
   if (outcome.cancelled) {
-    new import_obsidian4.Notice("Export cancelled.");
+    new import_obsidian5.Notice("Export cancelled.");
     return;
   }
   const errors = outcome.report.errors.length;
   const warnings = outcome.report.warnings.length;
   const files = outcome.written.length;
   const suffix = errors > 0 ? ` \u2014 ${errors} error${errors === 1 ? "" : "s"}` : warnings > 0 ? ` \u2014 ${warnings} warning${warnings === 1 ? "" : "s"}` : "";
-  new import_obsidian4.Notice(
+  new import_obsidian5.Notice(
     files === 0 ? `Nothing was exported${suffix}.` : `Exported ${files} file${files === 1 ? "" : "s"}, ${outcome.pageCount} page${outcome.pageCount === 1 ? "" : "s"}${suffix}.`
   );
 }
@@ -56258,12 +56851,12 @@ async function maybeOpenExport(outcome, settings) {
     await openExportedFile(path);
   } catch (error2) {
     console.error("[multi-exporter] could not open the exported file", path, error2);
-    new import_obsidian4.Notice(`Could not open the exported PDF: ${error2 instanceof Error ? error2.message : String(error2)}`);
+    new import_obsidian5.Notice(`Could not open the exported PDF: ${error2 instanceof Error ? error2.message : String(error2)}`);
   }
 }
 
 // src/shell/export-modal.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // src/core/export-plan.ts
 function isExportableNote(path) {
@@ -56319,7 +56912,7 @@ function trimTrailingSlash(dir) {
 }
 
 // src/shell/export-modal.ts
-var ExportModal = class extends import_obsidian5.Modal {
+var ExportModal = class extends import_obsidian6.Modal {
   constructor(app, file, settings, service) {
     var _a, _b, _c, _d;
     super(app);
@@ -56403,7 +56996,7 @@ var ExportModal = class extends import_obsidian5.Modal {
     const previewPane = layout.createDiv({ cls: "mx-export-preview" });
     const controls = layout.createDiv({ cls: "mx-export-controls" });
     this.backend = new PagedJsWebviewBackend(previewPane);
-    new import_obsidian5.Setting(controls).setName("Profile").addDropdown((dropdown) => {
+    new import_obsidian6.Setting(controls).setName("Profile").addDropdown((dropdown) => {
       for (const profile of this.settings.profiles) dropdown.addOption(profile.id, profile.name);
       dropdown.setValue(this.profile.id);
       dropdown.onChange((value) => {
@@ -56416,7 +57009,7 @@ var ExportModal = class extends import_obsidian5.Modal {
         void this.repaginate();
       });
     });
-    new import_obsidian5.Setting(controls).setName("Orientation").addDropdown((dropdown) => {
+    new import_obsidian6.Setting(controls).setName("Orientation").addDropdown((dropdown) => {
       dropdown.addOption("profile", "Profile default");
       dropdown.addOption("portrait", "Portrait");
       dropdown.addOption("landscape", "Landscape");
@@ -56426,7 +57019,7 @@ var ExportModal = class extends import_obsidian5.Modal {
         void this.repaginate();
       });
     });
-    new import_obsidian5.Setting(controls).setName("Fit to page").addDropdown((dropdown) => {
+    new import_obsidian6.Setting(controls).setName("Fit to page").addDropdown((dropdown) => {
       dropdown.addOption("profile", "Profile default");
       dropdown.addOption("off", "Off");
       dropdown.addOption("width", "Fit width");
@@ -56439,26 +57032,26 @@ var ExportModal = class extends import_obsidian5.Modal {
         if (this.pagesTallTarget() > 0 || this.fit === "off") void this.repaginate();
       });
     });
-    new import_obsidian5.Setting(controls).setName("Pages wide").addText((text) => {
+    new import_obsidian6.Setting(controls).setName("Pages wide").addText((text) => {
       this.pageInputs.push(text);
       text.setPlaceholder(String(clampPagesWide(this.profile.page.fitPagesWide))).onChange((value) => {
         this.pagesWide = value.trim() === "" ? null : clampPagesWide(Number(value));
       });
     });
-    new import_obsidian5.Setting(controls).setName("Pages tall").addText((text) => {
+    new import_obsidian6.Setting(controls).setName("Pages tall").addText((text) => {
       this.pageInputs.push(text);
       text.setPlaceholder(String(clampPagesTall(this.profile.page.fitPagesTall))).onChange((value) => {
         this.pagesTall = value.trim() === "" ? null : clampPagesTall(Number(value));
         void this.repaginate();
       });
     });
-    new import_obsidian5.Setting(controls).setName("Zoom").addSlider((slider) => {
+    new import_obsidian6.Setting(controls).setName("Zoom").addSlider((slider) => {
       this.zoomSlider = slider;
       slider.setLimits(ZOOM_MIN, ZOOM_MAX, ZOOM_STEP).setValue(clampZoom(this.profile.page.printScale)).setDynamicTooltip().onChange((value) => {
         this.zoom = value;
       });
     });
-    new import_obsidian5.Setting(controls).setName("Annotations").addDropdown((dropdown) => {
+    new import_obsidian6.Setting(controls).setName("Annotations").addDropdown((dropdown) => {
       dropdown.addOption("profile", "Profile default");
       dropdown.addOption("off", "Off");
       dropdown.addOption("gutter", "Margin cards");
@@ -56470,14 +57063,14 @@ var ExportModal = class extends import_obsidian5.Modal {
       });
     });
     this.syncFitControls();
-    new import_obsidian5.Setting(controls).setName("File name").addText(
+    new import_obsidian6.Setting(controls).setName("File name").addText(
       (text) => text.setPlaceholder(this.file.basename).setValue(this.fileName).onChange((value) => {
         this.fileName = value;
       })
     );
     this.status = controls.createDiv({ cls: "mx-export-status" });
     const actions = contentEl.createDiv({ cls: "mx-export-actions" });
-    new import_obsidian5.Setting(actions).addButton(
+    new import_obsidian6.Setting(actions).addButton(
       (button) => button.setButtonText("Refresh preview").onClick(() => {
         void this.repaginate();
       })
@@ -56649,7 +57242,7 @@ var ExportModal = class extends import_obsidian5.Modal {
   }
   fail(error2) {
     console.error("[multi-exporter] export failed", error2);
-    new import_obsidian5.Notice(`Export failed: ${describeError(error2)}`);
+    new import_obsidian6.Notice(`Export failed: ${describeError(error2)}`);
     this.setStatus(`Export failed: ${describeError(error2)}`);
   }
   setStatus(text) {
@@ -56684,8 +57277,8 @@ function clampZoom(value) {
 }
 
 // src/shell/folder-export-modal.ts
-var import_obsidian6 = require("obsidian");
-var FolderExportModal = class extends import_obsidian6.Modal {
+var import_obsidian7 = require("obsidian");
+var FolderExportModal = class extends import_obsidian7.Modal {
   constructor(app, folder, settings, service) {
     var _a;
     super(app);
@@ -56708,7 +57301,7 @@ var FolderExportModal = class extends import_obsidian6.Modal {
       cls: "mx-hint",
       text: `${notes.length} Markdown note${notes.length === 1 ? "" : "s"}, ordered by folder hierarchy then file name.`
     });
-    new import_obsidian6.Setting(contentEl).setName("Mode").setDesc("Separate reproduces the folder hierarchy; merged produces one PDF, numbered per note or continuously as the profile says.").addDropdown((dropdown) => {
+    new import_obsidian7.Setting(contentEl).setName("Mode").setDesc("Separate reproduces the folder hierarchy; merged produces one PDF, numbered per note or continuously as the profile says.").addDropdown((dropdown) => {
       dropdown.addOption("separate", "Separate \u2014 one PDF per note");
       dropdown.addOption("merged", "Merged \u2014 one PDF");
       dropdown.setValue(this.mode);
@@ -56718,7 +57311,7 @@ var FolderExportModal = class extends import_obsidian6.Modal {
       });
     });
     if (this.mode === "separate") {
-      new import_obsidian6.Setting(contentEl).setName("Use per-folder profile defaults").setDesc("Off means every note is exported with the profile chosen below.").addToggle(
+      new import_obsidian7.Setting(contentEl).setName("Use per-folder profile defaults").setDesc("Off means every note is exported with the profile chosen below.").addToggle(
         (toggle) => toggle.setValue(this.useFolderDefaults).onChange((value) => {
           this.useFolderDefaults = value;
         })
@@ -56729,7 +57322,7 @@ var FolderExportModal = class extends import_obsidian6.Modal {
         text: "Merged export uses one profile for the whole document, so per-folder defaults do not apply."
       });
     }
-    new import_obsidian6.Setting(contentEl).setName("Profile").addDropdown((dropdown) => {
+    new import_obsidian7.Setting(contentEl).setName("Profile").addDropdown((dropdown) => {
       for (const profile of this.settings.profiles) dropdown.addOption(profile.id, profile.name);
       dropdown.setValue(this.profile.id);
       dropdown.onChange((value) => {
@@ -56739,7 +57332,7 @@ var FolderExportModal = class extends import_obsidian6.Modal {
     });
     this.progressEl = contentEl.createDiv({ cls: "mx-progress-list" });
     this.progressEl.setText("Ready.");
-    new import_obsidian6.Setting(contentEl.createDiv({ cls: "mx-export-actions" })).addButton(
+    new import_obsidian7.Setting(contentEl.createDiv({ cls: "mx-export-actions" })).addButton(
       (button) => button.setButtonText("Cancel").onClick(() => {
         if (!this.running) {
           this.close();
@@ -56760,8 +57353,8 @@ var FolderExportModal = class extends import_obsidian6.Modal {
     const paths = [];
     const walk = (folder) => {
       for (const child of folder.children) {
-        if (child instanceof import_obsidian6.TFolder) walk(child);
-        else if (child instanceof import_obsidian6.TFile && isExportableNote(child.path)) paths.push(child.path);
+        if (child instanceof import_obsidian7.TFolder) walk(child);
+        else if (child instanceof import_obsidian7.TFile && isExportableNote(child.path)) paths.push(child.path);
       }
     };
     walk(this.folder);
@@ -56769,7 +57362,7 @@ var FolderExportModal = class extends import_obsidian6.Modal {
   }
   async export(paths) {
     if (this.running || paths.length === 0) {
-      if (paths.length === 0) new import_obsidian6.Notice("That folder contains no Markdown notes.");
+      if (paths.length === 0) new import_obsidian7.Notice("That folder contains no Markdown notes.");
       return;
     }
     const plan = this.mode === "merged" ? await this.buildMergedPlan(paths) : await this.buildSeparatePlan(paths);
@@ -56789,7 +57382,7 @@ var FolderExportModal = class extends import_obsidian6.Modal {
       announceOutcome(outcome);
       void maybeOpenExport(outcome, this.settings);
     } catch (error2) {
-      new import_obsidian6.Notice(`Export failed: ${describeError(error2)}`);
+      new import_obsidian7.Notice(`Export failed: ${describeError(error2)}`);
       this.log(`Failed: ${describeError(error2)}`);
     } finally {
       this.running = false;
@@ -56828,11 +57421,11 @@ var FolderExportModal = class extends import_obsidian6.Modal {
 };
 
 // src/settings-tab.ts
-var import_obsidian8 = require("obsidian");
+var import_obsidian9 = require("obsidian");
 
 // src/shell/confirm-modal.ts
-var import_obsidian7 = require("obsidian");
-var ConfirmModal = class extends import_obsidian7.Modal {
+var import_obsidian8 = require("obsidian");
+var ConfirmModal = class extends import_obsidian8.Modal {
   constructor(app, options, resolve) {
     super(app);
     this.options = options;
@@ -56844,7 +57437,7 @@ var ConfirmModal = class extends import_obsidian7.Modal {
     contentEl.empty();
     contentEl.createEl("h3", { text: this.options.title });
     for (const paragraph of this.options.body) contentEl.createEl("p", { text: paragraph });
-    new import_obsidian7.Setting(contentEl).addButton(
+    new import_obsidian8.Setting(contentEl).addButton(
       (button) => button.setButtonText("Cancel").onClick(() => {
         this.close();
       })
@@ -56884,7 +57477,7 @@ var EDGE_LABELS = {
   bottom: "Bottom",
   left: "Left"
 };
-var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
+var MultiExporterSettingTab = class extends import_obsidian9.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -56930,8 +57523,8 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
     await this.plugin.saveSettings();
   }
   renderProfileList(containerEl) {
-    new import_obsidian8.Setting(containerEl).setName("Profiles").setHeading();
-    new import_obsidian8.Setting(containerEl).setName("Default profile").setDesc("Used when no folder mapping matches.").addDropdown((dropdown) => {
+    new import_obsidian9.Setting(containerEl).setName("Profiles").setHeading();
+    new import_obsidian9.Setting(containerEl).setName("Default profile").setDesc("Used when no folder mapping matches.").addDropdown((dropdown) => {
       for (const profile of this.settings.profiles) dropdown.addOption(profile.id, profile.name);
       dropdown.setValue(this.settings.defaultProfileId);
       dropdown.onChange(async (value) => {
@@ -56940,7 +57533,7 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
       });
     });
     for (const profile of this.settings.profiles) {
-      new import_obsidian8.Setting(containerEl).setName(profile.name).setDesc(profile.id).addButton(
+      new import_obsidian9.Setting(containerEl).setName(profile.name).setDesc(profile.id).addButton(
         (button) => button.setButtonText("Edit").onClick(() => {
           this.editingProfileId = profile.id;
           this.display();
@@ -56980,7 +57573,7 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
         })
       );
     }
-    new import_obsidian8.Setting(containerEl).addButton(
+    new import_obsidian9.Setting(containerEl).addButton(
       (button) => button.setButtonText("New profile").setCta().onClick(async () => {
         const template = createDefaultProfiles()[0];
         if (template === void 0) return;
@@ -57039,21 +57632,21 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
     const profile = this.settings.profiles.find((candidate) => candidate.id === this.editingProfileId);
     if (profile === void 0) return;
     const editor = containerEl.createDiv({ cls: "mx-profile-editor" });
-    new import_obsidian8.Setting(editor).setName(`Editing: ${profile.name}`).setHeading();
-    new import_obsidian8.Setting(editor).setName("Name").addText(
+    new import_obsidian9.Setting(editor).setName(`Editing: ${profile.name}`).setHeading();
+    new import_obsidian9.Setting(editor).setName("Name").addText(
       (text) => text.setValue(profile.name).onChange(async (value) => {
         profile.name = value;
         await this.save();
       })
     );
-    new import_obsidian8.Setting(editor).setName("CSL style").setDesc("Passed to zotero-manager. Leave empty to use its own configured default.").addText(
+    new import_obsidian9.Setting(editor).setName("CSL style").setDesc("Passed to zotero-manager. Leave empty to use its own configured default.").addText(
       (text) => text.setValue(profile.cslStyle).onChange(async (value) => {
         profile.cslStyle = value;
         await this.save();
       })
     );
-    new import_obsidian8.Setting(editor).setName("Page").setHeading();
-    new import_obsidian8.Setting(editor).setName("Page size").addDropdown((dropdown) => {
+    new import_obsidian9.Setting(editor).setName("Page").setHeading();
+    new import_obsidian9.Setting(editor).setName("Page size").addDropdown((dropdown) => {
       for (const size of Object.keys(PAGE_SIZES)) dropdown.addOption(size, size);
       dropdown.setValue(profile.page.size);
       dropdown.onChange(async (value) => {
@@ -57061,7 +57654,7 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
         await this.save();
       });
     });
-    new import_obsidian8.Setting(editor).setName("Orientation").addDropdown((dropdown) => {
+    new import_obsidian9.Setting(editor).setName("Orientation").addDropdown((dropdown) => {
       dropdown.addOption("portrait", "Portrait");
       dropdown.addOption("landscape", "Landscape");
       dropdown.setValue(profile.page.orientation);
@@ -57070,7 +57663,7 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
         await this.save();
       });
     });
-    new import_obsidian8.Setting(editor).setName("Fit to page").setDesc(
+    new import_obsidian9.Setting(editor).setName("Fit to page").setDesc(
       "Shrink the whole document until its widest and tallest content fits inside the page box. Measured on the finished pages, so it only ever scales down."
     ).addToggle(
       (toggle) => toggle.setValue(profile.page.fitToPage).onChange(async (value) => {
@@ -57080,7 +57673,7 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
       })
     );
     if (profile.page.fitToPage) {
-      new import_obsidian8.Setting(editor).setName("Fit to").setDesc(
+      new import_obsidian9.Setting(editor).setName("Fit to").setDesc(
         "Which page constraint is measured. The print scale is one uniform number, so this chooses what to fit for, not how to squeeze \u2014 Both satisfies the harsher of the two."
       ).addDropdown((dropdown) => {
         var _a;
@@ -57093,7 +57686,7 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
           await this.save();
         });
       });
-      new import_obsidian8.Setting(editor).setName("Pages wide").setDesc(
+      new import_obsidian9.Setting(editor).setName("Pages wide").setDesc(
         "How many page-widths of content to allow before the width fit shrinks anything. 1 keeps everything inside the text column; 2 lets a wide table run to twice it."
       ).addText(
         (text) => text.setPlaceholder("1").setValue(String(clampPagesWide(profile.page.fitPagesWide))).onChange(async (value) => {
@@ -57101,7 +57694,7 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
           await this.save();
         })
       );
-      new import_obsidian8.Setting(editor).setName("Pages tall").setDesc(
+      new import_obsidian9.Setting(editor).setName("Pages tall").setDesc(
         "Fit the whole document into this many pages by laying it out smaller and paginating again. 0 is no target. Costs an extra pagination or two per export."
       ).addText(
         (text) => text.setPlaceholder("0").setValue(String(clampPagesTall(profile.page.fitPagesTall))).onChange(async (value) => {
@@ -57110,14 +57703,14 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
         })
       );
     } else {
-      new import_obsidian8.Setting(editor).setName("Print scale").setDesc("Percentage the finished pages are printed at, where 100 is unscaled.").addSlider(
+      new import_obsidian9.Setting(editor).setName("Print scale").setDesc("Percentage the finished pages are printed at, where 100 is unscaled.").addSlider(
         (slider) => slider.setLimits(40, 200, 5).setValue(clampPercent(profile.page.printScale)).setDynamicTooltip().onChange(async (value) => {
           profile.page.printScale = value;
           await this.save();
         })
       );
     }
-    const margins = new import_obsidian8.Setting(editor).setName("Margins").setDesc("Top, right, bottom, left \u2014 any CSS length. Inches by default; mm and pt work too.").setClass("mx-margins-setting");
+    const margins = new import_obsidian9.Setting(editor).setName("Margins").setDesc("Top, right, bottom, left \u2014 any CSS length. Inches by default; mm and pt work too.").setClass("mx-margins-setting");
     for (const edge of MARGIN_EDGES) {
       margins.addText((text) => {
         text.setValue(profile.page.margins[edge]).onChange(async (value) => {
@@ -57128,7 +57721,7 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
         text.inputEl.setAttribute("aria-label", `${EDGE_LABELS[edge]} margin`);
       });
     }
-    new import_obsidian8.Setting(editor).setName("Reset page to defaults").setDesc(
+    new import_obsidian9.Setting(editor).setName("Reset page to defaults").setDesc(
       "Restores the shipped page size, orientation, scale, margins and furniture. Leaves the stylesheet alone."
     ).addButton(
       (button) => button.setButtonText("Reset page").onClick(async () => {
@@ -57140,13 +57733,13 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
         this.display();
       })
     );
-    new import_obsidian8.Setting(editor).setName("Suppress furniture on the first page").setDesc("Emits @page :first with every margin box emptied.").addToggle(
+    new import_obsidian9.Setting(editor).setName("Suppress furniture on the first page").setDesc("Emits @page :first with every margin box emptied.").addToggle(
       (toggle) => toggle.setValue(profile.page.suppressFirstPageFurniture).onChange(async (value) => {
         profile.page.suppressFirstPageFurniture = value;
         await this.save();
       })
     );
-    new import_obsidian8.Setting(editor).setName("Keep headings with their text").setDesc(
+    new import_obsidian9.Setting(editor).setName("Keep headings with their text").setDesc(
       "A heading that would land at the foot of a page moves to the next one along with the text under it."
     ).addToggle(
       (toggle) => toggle.setValue(profile.page.keepHeadingsWithText).onChange(async (value) => {
@@ -57154,7 +57747,7 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
         await this.save();
       })
     );
-    new import_obsidian8.Setting(editor).setName("Page numbering in a merged export").setDesc(
+    new import_obsidian9.Setting(editor).setName("Page numbering in a merged export").setDesc(
       "Per note restarts the count at each note, so the foot reads \u201C1 of 6\u201D then \u201C1 of 12\u201D. Continuous numbers the whole PDF 1\u2026N. Single-note and Separate exports are one document either way."
     ).addDropdown((dropdown) => {
       dropdown.addOption("per-note", "Restart at each note");
@@ -57165,32 +57758,32 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
         await this.save();
       });
     });
-    new import_obsidian8.Setting(editor).setName("Behaviour").setHeading();
-    new import_obsidian8.Setting(editor).setName("Resolve citations").setDesc("Treat wikilinks whose target is a known cite key as citations.").addToggle(
+    new import_obsidian9.Setting(editor).setName("Behaviour").setHeading();
+    new import_obsidian9.Setting(editor).setName("Resolve citations").setDesc("Treat wikilinks whose target is a known cite key as citations.").addToggle(
       (toggle) => toggle.setValue(profile.flags.resolveCitations).onChange(async (value) => {
         profile.flags.resolveCitations = value;
         await this.save();
       })
     );
-    new import_obsidian8.Setting(editor).setName("Emit bibliography").setDesc("Append a bibliography formatted by zotero-manager.").addToggle(
+    new import_obsidian9.Setting(editor).setName("Emit bibliography").setDesc("Append a bibliography formatted by zotero-manager.").addToggle(
       (toggle) => toggle.setValue(profile.flags.emitBibliography).onChange(async (value) => {
         profile.flags.emitBibliography = value;
         await this.save();
       })
     );
-    new import_obsidian8.Setting(editor).setName("Scan for Pandoc-style citations").setDesc("Opt-in secondary text scan for [@key]. Bare @key is never matched.").addToggle(
+    new import_obsidian9.Setting(editor).setName("Scan for Pandoc-style citations").setDesc("Opt-in secondary text scan for [@key]. Bare @key is never matched.").addToggle(
       (toggle) => toggle.setValue(profile.flags.pandocCitationScan).onChange(async (value) => {
         profile.flags.pandocCitationScan = value;
         await this.save();
       })
     );
-    new import_obsidian8.Setting(editor).setName("Inline images").setDesc("Embed remote and vault images as data URIs, so exports work offline.").addToggle(
+    new import_obsidian9.Setting(editor).setName("Inline images").setDesc("Embed remote and vault images as data URIs, so exports work offline.").addToggle(
       (toggle) => toggle.setValue(profile.flags.inlineImages).onChange(async (value) => {
         profile.flags.inlineImages = value;
         await this.save();
       })
     );
-    new import_obsidian8.Setting(editor).setName("Annotations").setDesc("Where md-annotation comments go. This setting decides, not the sidebar.").addDropdown((dropdown) => {
+    new import_obsidian9.Setting(editor).setName("Annotations").setDesc("Where md-annotation comments go. This setting decides, not the sidebar.").addDropdown((dropdown) => {
       dropdown.addOption("off", "Omit");
       dropdown.addOption("gutter", "In the page margin");
       dropdown.addOption("endnotes", "As endnotes");
@@ -57200,13 +57793,13 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
         await this.save();
       });
     });
-    new import_obsidian8.Setting(editor).setName("Run PDF Squeezer").setDesc("Uses the pdfs CLI when installed. Absence is not an error.").addToggle(
+    new import_obsidian9.Setting(editor).setName("Run PDF Squeezer").setDesc("Uses the pdfs CLI when installed. Absence is not an error.").addToggle(
       (toggle) => toggle.setValue(profile.flags.runSqueezer).onChange(async (value) => {
         profile.flags.runSqueezer = value;
         await this.save();
       })
     );
-    new import_obsidian8.Setting(editor).setName("PDF Squeezer profile").setDesc("Optional path to a .pdfscp file.").addText(
+    new import_obsidian9.Setting(editor).setName("PDF Squeezer profile").setDesc("Optional path to a .pdfscp file.").addText(
       (text) => {
         var _a;
         return text.setValue((_a = profile.flags.squeezerProfile) != null ? _a : "").onChange(async (value) => {
@@ -57216,14 +57809,14 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
         });
       }
     );
-    new import_obsidian8.Setting(editor).setName("Stylesheet").setDesc("The primary styling surface. @page rules are generated from the settings above and placed before this.").setClass("mx-stylesheet-setting");
+    new import_obsidian9.Setting(editor).setName("Stylesheet").setDesc("The primary styling surface. @page rules are generated from the settings above and placed before this.").setClass("mx-stylesheet-setting");
     const textarea = editor.createEl("textarea", { cls: "mx-stylesheet-input" });
     textarea.value = profile.stylesheet;
     textarea.addEventListener("change", () => {
       profile.stylesheet = textarea.value;
       void this.save();
     });
-    new import_obsidian8.Setting(editor).addButton(
+    new import_obsidian9.Setting(editor).addButton(
       (button) => button.setButtonText("Close editor").onClick(() => {
         this.editingProfileId = null;
         this.display();
@@ -57239,7 +57832,7 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
    */
   renderFolderDefaults(containerEl) {
     var _a;
-    new import_obsidian8.Setting(containerEl).setName("Folder defaults").setHeading();
+    new import_obsidian9.Setting(containerEl).setName("Folder defaults").setHeading();
     containerEl.createDiv({
       cls: "mx-hint",
       text: "Add a mapping from the folder context menu. The deepest mapping containing a note wins; these apply to single-note and separate exports, not to merged ones."
@@ -57254,7 +57847,7 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
       row.createSpan({ cls: "mx-folder-map-path", text: folder === "" ? "(vault root)" : folder });
       const profile = this.settings.profiles.find((candidate) => candidate.id === profileId);
       row.createSpan({ text: (_a = profile == null ? void 0 : profile.name) != null ? _a : `${profileId} (missing)` });
-      new import_obsidian8.Setting(row).addButton(
+      new import_obsidian9.Setting(row).addButton(
         (button) => button.setButtonText("Remove").setWarning().onClick(async () => {
           this.settings.folderProfiles = clearFolderProfile(this.settings.folderProfiles, folder);
           await this.save();
@@ -57264,8 +57857,8 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
     }
   }
   renderGeneral(containerEl) {
-    new import_obsidian8.Setting(containerEl).setName("Export").setHeading();
-    new import_obsidian8.Setting(containerEl).setName("Open PDF after export").setDesc(
+    new import_obsidian9.Setting(containerEl).setName("Export").setHeading();
+    new import_obsidian9.Setting(containerEl).setName("Open PDF after export").setDesc(
       "Opens the finished PDF with your system's default viewer once export completes. Only when export produces a single file \u2014 a separate bulk export writing many PDFs is left alone."
     ).addToggle(
       (toggle) => toggle.setValue(this.settings.openPdfAfterExport).onChange(async (value) => {
@@ -57273,8 +57866,8 @@ var MultiExporterSettingTab = class extends import_obsidian8.PluginSettingTab {
         await this.save();
       })
     );
-    new import_obsidian8.Setting(containerEl).setName("Images").setHeading();
-    new import_obsidian8.Setting(containerEl).setName("Image fetch timeout").setDesc("Milliseconds to wait for a remote image before substituting a placeholder.").addText(
+    new import_obsidian9.Setting(containerEl).setName("Images").setHeading();
+    new import_obsidian9.Setting(containerEl).setName("Image fetch timeout").setDesc("Milliseconds to wait for a remote image before substituting a placeholder.").addText(
       (text) => text.setValue(String(this.settings.imageFetchTimeoutMs)).onChange(async (value) => {
         const parsed = Number.parseInt(value, 10);
         if (Number.isInteger(parsed) && parsed > 0) {
@@ -57306,7 +57899,7 @@ function clampPercent(value) {
 }
 
 // src/main.ts
-var MultiExporterPlugin = class extends import_obsidian9.Plugin {
+var MultiExporterPlugin = class extends import_obsidian10.Plugin {
   constructor() {
     super(...arguments);
     this.settings = normalizeSettings(null);
@@ -57343,13 +57936,13 @@ var MultiExporterPlugin = class extends import_obsidian9.Plugin {
     });
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu, file) => {
-        if (file instanceof import_obsidian9.TFile && file.extension === "md") {
+        if (file instanceof import_obsidian10.TFile && file.extension === "md") {
           menu.addItem(
             (item) => item.setTitle("Export to PDF").setIcon("file-output").onClick(() => this.openExportModal(file))
           );
           return;
         }
-        if (file instanceof import_obsidian9.TFolder) {
+        if (file instanceof import_obsidian10.TFolder) {
           menu.addItem(
             (item) => item.setTitle("Export folder to PDF").setIcon("folder-output").onClick(() => this.openFolderExportModal(file))
           );
@@ -57375,14 +57968,14 @@ var MultiExporterPlugin = class extends import_obsidian9.Plugin {
    * changes which mapping applies to it without changing the map itself.
    */
   async handleRename(file, oldPath) {
-    if (!(file instanceof import_obsidian9.TFolder)) return;
+    if (!(file instanceof import_obsidian10.TFolder)) return;
     const result = remapFolderPaths(this.settings.folderProfiles, oldPath, file.path);
     if (!result.changed) return;
     this.settings.folderProfiles = result.map;
     await this.saveSettings();
   }
   async handleDelete(file) {
-    if (!(file instanceof import_obsidian9.TFolder)) return;
+    if (!(file instanceof import_obsidian10.TFolder)) return;
     const result = removeFolderPaths(this.settings.folderProfiles, file.path);
     if (!result.changed) return;
     this.settings.folderProfiles = result.map;
@@ -57401,7 +57994,7 @@ var MultiExporterPlugin = class extends import_obsidian9.Plugin {
               profile.id
             );
             await this.saveSettings();
-            new import_obsidian9.Notice(`${folder.name || "Vault root"} now defaults to ${profile.name}.`);
+            new import_obsidian10.Notice(`${folder.name || "Vault root"} now defaults to ${profile.name}.`);
           })
         );
       }

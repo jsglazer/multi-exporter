@@ -1,6 +1,8 @@
 import { Component, MarkdownRenderer, TFile } from 'obsidian';
 import type { App } from 'obsidian';
+import { isExcalidrawNote } from '../core/excalidraw';
 import type { DocumentRenderer, RenderedNote } from '../core/pipeline';
+import { renderExcalidrawBoard } from './excalidraw-render';
 
 /**
  * Rendering a note to DOM with Obsidian's own renderer.
@@ -37,13 +39,20 @@ export class ObsidianDocumentRenderer implements DocumentRenderer {
 		const component = new Component();
 		component.load();
 
-		await MarkdownRenderer.render(this.app, markdown, container, sourcePath, component);
+		const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+		if (isExcalidrawNote(frontmatter)) {
+			// An .excalidraw.md file's own markdown is just the plugin's save-format scaffold;
+			// the canvas it actually draws lives in a compressed blob MarkdownRenderer never
+			// sees. See `core/excalidraw.ts` for why this note type needs its own path.
+			await renderExcalidrawBoard(this.app, file, markdown, container, component, new Set([sourcePath]));
+		} else {
+			await MarkdownRenderer.render(this.app, markdown, container, sourcePath, component);
+		}
 		// Dataview and Datacore render asynchronously and reactively, so the DOM is not
 		// finished when `render` resolves. Poll for stability rather than sleeping a fixed
 		// two seconds: a plain note settles in one poll, and a slow one is still correct.
 		await waitForDomStability(container);
 
-		const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
 		const cssClasses = normalizeCssClasses(frontmatter?.['cssclasses'] ?? frontmatter?.['cssclass']);
 		const note: RenderedNote = {
 			sourcePath,
