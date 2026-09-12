@@ -624,7 +624,18 @@ function paginateScript(html: string, css: string, previewChrome: boolean, mathC
 	source.innerHTML = ${JSON.stringify(html)};
 	window.__mxSourceElements = source.querySelectorAll('*').length;
 	window.__mxStage = 'measuring-tables';
+	// The profile's own CSS has to be live for this measurement — a bold header font, a
+	// different typeface, a border eating into the content box all change how wide a cell
+	// naturally wants to be, and measuring against the browser's bare default font before any
+	// of that is applied is what quietly mismeasured "Imp" and "Page" the first time round.
+	// table-layout is forced back to auto regardless of what the profile CSS says, because
+	// naming a fixed column width is the one thing this measurement cannot ask the profile
+	// stylesheet — that is what it is here to compute in the first place.
+	const measureStyle = document.createElement('style');
+	measureStyle.textContent = ${JSON.stringify(css)} + '\\ntable { table-layout: auto !important; width: auto !important; }';
+	document.head.appendChild(measureStyle);
 	pinTableColumnWidths(source);
+	measureStyle.remove();
 	window.__mxStage = 'creating-previewer';
 	const previewer = new window.Paged.Previewer();
 	window.__mxPreviewer = previewer;
