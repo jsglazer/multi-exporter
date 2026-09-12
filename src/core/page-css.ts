@@ -44,14 +44,16 @@ html, body { margin: 0; padding: 0; }
 img, svg, video, canvas, iframe { max-width: 100%; height: auto; }
 pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
 /* table-layout: fixed keeps every column the same width on every page a table spans. paged.js
-   splits a long table into a separate <table> per page, and with the browser's default
-   'auto' layout each of those fragments sizes its own columns from only the rows that landed
-   on it — so a column can come out a different width on page 2 than it was on page 1, which
-   reads as "the columns got compressed". Fixed layout takes widths once (from the first row,
-   or equally when none is given) and holds them for every fragment. A profile that wants
-   asymmetric columns can still set them explicitly, e.g. a wider first column via
-   'td:first-child, th:first-child { width: 40%; }'. */
-table { max-width: 100%; border-collapse: collapse; table-layout: fixed; }
+   splits a long table across a page break by shallow-cloning only the ancestor chain down to
+   the break point — the clone carries no <thead>, so a continuation page's table starts fresh
+   with whatever body row landed first on it. Fixed layout still needs a definite table width
+   to divide among the (still unspecified) columns; without one, an empty cell in that first
+   body row — "Imp" or "Page" left blank until reviewed, say — has nothing to claim and
+   collapses toward zero, which reads as "the columns got compressed on page 2". The explicit
+   width: 100% is what gives fixed layout a real number to divide regardless of which row
+   starts a given page. A profile that wants asymmetric columns can still set them explicitly,
+   e.g. a wider first column via 'td:first-child, th:first-child { width: 40%; }'. */
+table { width: 100%; max-width: 100%; border-collapse: collapse; table-layout: fixed; }
 table, th, td { border: 1px solid currentColor; }
 mjx-container { max-width: 100%; }
 mjx-container svg { max-width: 100%; height: auto; }
