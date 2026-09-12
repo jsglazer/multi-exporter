@@ -623,19 +623,8 @@ function paginateScript(html: string, css: string, previewChrome: boolean, mathC
 	window.__mxStage = 'building-source';
 	source.innerHTML = ${JSON.stringify(html)};
 	window.__mxSourceElements = source.querySelectorAll('*').length;
-	window.__mxStage = 'measuring-tables';
-	// The profile's own CSS has to be live for this measurement — a bold header font, a
-	// different typeface, a border eating into the content box all change how wide a cell
-	// naturally wants to be, and measuring against the browser's bare default font before any
-	// of that is applied is what quietly mismeasured "Imp" and "Page" the first time round.
-	// table-layout is forced back to auto regardless of what the profile CSS says, because
-	// naming a fixed column width is the one thing this measurement cannot ask the profile
-	// stylesheet — that is what it is here to compute in the first place.
-	const measureStyle = document.createElement('style');
-	measureStyle.textContent = ${JSON.stringify(css)} + '\\ntable { table-layout: auto !important; width: auto !important; }';
-	document.head.appendChild(measureStyle);
+	window.__mxStage = 'sizing-table-columns';
 	pinTableColumnWidths(source);
-	measureStyle.remove();
 	window.__mxStage = 'creating-previewer';
 	const previewer = new window.Paged.Previewer();
 	window.__mxPreviewer = previewer;
@@ -813,47 +802,54 @@ const STALL_SNAPSHOT_SCRIPT = `(() => {
  * Previewer is constructed — before `preview()` is called and long before anything hangs.
  */
 /**
- * Pin every table's column widths, in percent, from its own natural (un-paginated) layout.
+ * Pin narrow table columns to a content-fitted width, in `ch`, and leave the rest unset.
  *
  * `table-layout: fixed` (see `core/page-css.ts`) needs a definite width to divide among
  * columns that carry none of their own, and — now that `repeat-table-thead.patch` gives every
  * page fragment the same header row — every fragment's "first row" is identical, so with no
- * explicit widths fixed layout would divide the columns dead equally on every page. That is
- * consistent but not what a table with a long prose column and four short numeric ones wants.
+ * explicit widths fixed layout would divide every column dead equally on every page. That is
+ * consistent, but wrong for a table with one long prose column next to several short ones: a
+ * pure ratio of natural widths was tried and measured "Imp" or "Page" as a sliver next to
+ * "Unit — can you do this cold?", because a straight percentage split has no notion of "give
+ * this column what it actually needs, first" the way the browser's own auto layout does —
+ * measuring more precisely never fixes that, the model itself is wrong for this shape.
  *
- * Run once, on the *source* tree, before it is handed to the paginator: `source` is briefly
- * attached to `document.body` (which is empty at this point and has no profile stylesheet
- * applied yet, so the browser's ordinary auto layout measures real natural proportions),
- * each table's header-row cell widths are read off and turned into percentages, and those
- * percentages are written as an inline `width` on every cell in the same column — not just
- * the header's — so whichever row a page break happens to start with still carries the right
- * number. `source` is detached again immediately after, restoring the state `preview()`
- * expects.
+ * `ch` sidesteps measurement entirely: a "0"-character's width in whatever font is actually
+ * active *at render time*, which is exactly what a column needs to fit its longest content
+ * without needing to know the font in advance or attach anything to a live document to check.
+ * Only columns short enough to plausibly be a label or a number get a width at all — under
+ * fixed layout, a column with none divides whatever is left over, so the one genuinely wide
+ * column (usually exactly one) ends up with all of it.
  *
  * A table whose rows don't all have the same cell count — colspan, rowspan, anything
  * irregular — is left alone entirely rather than partially pinned: fixed layout's equal
  * division is a safe fallback for a shape this cannot reason about.
  */
+const NARROW_COLUMN_MAX_CHARS = 20;
+
 const PIN_TABLE_COLUMN_WIDTHS = `const pinTableColumnWidths = (root) => {
 	const tables = Array.from(root.querySelectorAll('table'));
-	if (tables.length === 0) return;
-	document.body.appendChild(root);
 	tables.forEach((table) => {
 		const rows = Array.from(table.rows);
 		if (rows.length === 0) return;
-		const headerRow = rows[0];
-		const columnCount = headerRow.cells.length;
+		const columnCount = rows[0].cells.length;
 		if (columnCount === 0 || rows.some((row) => row.cells.length !== columnCount)) return;
-		const widths = Array.from(headerRow.cells).map((cell) => cell.getBoundingClientRect().width);
-		const total = widths.reduce((sum, width) => sum + width, 0);
-		if (total <= 0) return;
+		const maxChars = new Array(columnCount).fill(0);
 		rows.forEach((row) => {
 			Array.from(row.cells).forEach((cell, index) => {
-				cell.style.width = ((widths[index] / total) * 100).toFixed(4) + '%';
+				const length = (cell.textContent || '').trim().length;
+				if (length > maxChars[index]) maxChars[index] = length;
+			});
+		});
+		maxChars.forEach((chars, index) => {
+			if (chars === 0 || chars > ${NARROW_COLUMN_MAX_CHARS}) return;
+			const width = (chars + 2) + 'ch';
+			rows.forEach((row) => {
+				const cell = row.cells[index];
+				if (cell) cell.style.width = width;
 			});
 		});
 	});
-	root.remove();
 };`;
 
 const AFTER_PARSED_INSTRUMENT = `const instrumentAfterParsed = (previewer) => {

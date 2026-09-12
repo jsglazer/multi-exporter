@@ -40034,19 +40034,8 @@ function paginateScript(html, css, previewChrome, mathCss) {
 	window.__mxStage = 'building-source';
 	source.innerHTML = ${JSON.stringify(html)};
 	window.__mxSourceElements = source.querySelectorAll('*').length;
-	window.__mxStage = 'measuring-tables';
-	// The profile's own CSS has to be live for this measurement \u2014 a bold header font, a
-	// different typeface, a border eating into the content box all change how wide a cell
-	// naturally wants to be, and measuring against the browser's bare default font before any
-	// of that is applied is what quietly mismeasured "Imp" and "Page" the first time round.
-	// table-layout is forced back to auto regardless of what the profile CSS says, because
-	// naming a fixed column width is the one thing this measurement cannot ask the profile
-	// stylesheet \u2014 that is what it is here to compute in the first place.
-	const measureStyle = document.createElement('style');
-	measureStyle.textContent = ${JSON.stringify(css)} + '\\ntable { table-layout: auto !important; width: auto !important; }';
-	document.head.appendChild(measureStyle);
+	window.__mxStage = 'sizing-table-columns';
 	pinTableColumnWidths(source);
-	measureStyle.remove();
 	window.__mxStage = 'creating-previewer';
 	const previewer = new window.Paged.Previewer();
 	window.__mxPreviewer = previewer;
@@ -40143,26 +40132,30 @@ var STALL_SNAPSHOT_SCRIPT = `(() => {
 		hooks: window.__mxHooks || null,
 	};
 })()`;
+var NARROW_COLUMN_MAX_CHARS = 20;
 var PIN_TABLE_COLUMN_WIDTHS = `const pinTableColumnWidths = (root) => {
 	const tables = Array.from(root.querySelectorAll('table'));
-	if (tables.length === 0) return;
-	document.body.appendChild(root);
 	tables.forEach((table) => {
 		const rows = Array.from(table.rows);
 		if (rows.length === 0) return;
-		const headerRow = rows[0];
-		const columnCount = headerRow.cells.length;
+		const columnCount = rows[0].cells.length;
 		if (columnCount === 0 || rows.some((row) => row.cells.length !== columnCount)) return;
-		const widths = Array.from(headerRow.cells).map((cell) => cell.getBoundingClientRect().width);
-		const total = widths.reduce((sum, width) => sum + width, 0);
-		if (total <= 0) return;
+		const maxChars = new Array(columnCount).fill(0);
 		rows.forEach((row) => {
 			Array.from(row.cells).forEach((cell, index) => {
-				cell.style.width = ((widths[index] / total) * 100).toFixed(4) + '%';
+				const length = (cell.textContent || '').trim().length;
+				if (length > maxChars[index]) maxChars[index] = length;
+			});
+		});
+		maxChars.forEach((chars, index) => {
+			if (chars === 0 || chars > ${NARROW_COLUMN_MAX_CHARS}) return;
+			const width = (chars + 2) + 'ch';
+			rows.forEach((row) => {
+				const cell = row.cells[index];
+				if (cell) cell.style.width = width;
 			});
 		});
 	});
-	root.remove();
 };`;
 var AFTER_PARSED_INSTRUMENT = `const instrumentAfterParsed = (previewer) => {
 	try {
