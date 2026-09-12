@@ -6977,7 +6977,15 @@ var paged_polyfill_default = `/**
 		for (var i = 0; i < ancestors.length; i++) {
 			ancestor = ancestors[i];
 			parent = ancestor.cloneNode(false);
-		
+
+			// multi-exporter patch: repeat a split table's header on the continuation page.
+			// This loop only walks the cut node's own ancestor chain, so a <thead> -- never
+			// an ancestor of a <td> inside <tbody> -- is dropped when a table splits across
+			// a page break, leaving the continuation with no column labels at all.
+			if (parent.nodeName === "TABLE" && ancestor.tHead) {
+				parent.appendChild(ancestor.tHead.cloneNode(true));
+			}
+
 			parent.setAttribute("data-split-from", parent.getAttribute("data-ref"));
 			// ancestor.setAttribute("data-split-to", parent.getAttribute("data-ref"));
 
@@ -39992,6 +40000,7 @@ function bootstrapScript(pagedJsSource) {
 }
 function paginateScript(html, css, previewChrome, mathCss) {
   return `(async () => {
+	${PIN_TABLE_COLUMN_WIDTHS}
 	${AFTER_PARSED_INSTRUMENT}
 	// Each run builds a fresh Previewer, so the previous one's polisher output has to go
 	// with it \u2014 otherwise every refresh leaves another copy of the page rules in the head
@@ -40025,6 +40034,8 @@ function paginateScript(html, css, previewChrome, mathCss) {
 	window.__mxStage = 'building-source';
 	source.innerHTML = ${JSON.stringify(html)};
 	window.__mxSourceElements = source.querySelectorAll('*').length;
+	window.__mxStage = 'measuring-tables';
+	pinTableColumnWidths(source);
 	window.__mxStage = 'creating-previewer';
 	const previewer = new window.Paged.Previewer();
 	window.__mxPreviewer = previewer;
@@ -40121,6 +40132,27 @@ var STALL_SNAPSHOT_SCRIPT = `(() => {
 		hooks: window.__mxHooks || null,
 	};
 })()`;
+var PIN_TABLE_COLUMN_WIDTHS = `const pinTableColumnWidths = (root) => {
+	const tables = Array.from(root.querySelectorAll('table'));
+	if (tables.length === 0) return;
+	document.body.appendChild(root);
+	tables.forEach((table) => {
+		const rows = Array.from(table.rows);
+		if (rows.length === 0) return;
+		const headerRow = rows[0];
+		const columnCount = headerRow.cells.length;
+		if (columnCount === 0 || rows.some((row) => row.cells.length !== columnCount)) return;
+		const widths = Array.from(headerRow.cells).map((cell) => cell.getBoundingClientRect().width);
+		const total = widths.reduce((sum, width) => sum + width, 0);
+		if (total <= 0) return;
+		rows.forEach((row) => {
+			Array.from(row.cells).forEach((cell, index) => {
+				cell.style.width = ((widths[index] / total) * 100).toFixed(4) + '%';
+			});
+		});
+	});
+	root.remove();
+};`;
 var AFTER_PARSED_INSTRUMENT = `const instrumentAfterParsed = (previewer) => {
 	try {
 		const hook = previewer.chunker && previewer.chunker.hooks && previewer.chunker.hooks.afterParsed;

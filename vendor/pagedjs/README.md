@@ -25,15 +25,22 @@ Two upstream crashes abort pagination with an error that says nothing about the 
 
 The failure was doubly opaque: `executeJavaScript` re-raises any in-guest exception as `Error invoking remote method 'GUEST_VIEW_MANAGER_CALL': Error: <message>`, so a stylesheet bug arrived looking like a dead renderer process.
 
+### `repeat-table-thead.patch`
+
+Not a crash — a silent content loss. When a table is too long for one page, `rebuildAncestors` builds the continuation page's copy of it by shallow-cloning only the *ancestor chain of the cut node* (`TD` → `TR` → `TBODY` → `TABLE` → …). A `<thead>` is never an ancestor of a `<td>` inside `<tbody>`, so it is never in that chain and never makes it into the clone — the continuation's `<table>` starts fresh with only body rows, no header. Two consequences: the column labels are gone from every page after the first, and (see `src/core/page-css.ts`'s `table-layout: fixed`) whichever body row happens to land first on that page now has no header row to anchor the CSS fixed-table-layout algorithm against.
+
+The patch clones the original table's `tHead` into the rebuilt `TABLE` ancestor the moment it is cloned, so every continuation page gets its own copy of the header row.
+
 ## Re-vendoring
 
-Re-apply both patches, in order, after any re-vendor:
+Re-apply all three patches, in order, after any re-vendor:
 
 ```sh
 cp node_modules/pagedjs/dist/paged.polyfill.js vendor/pagedjs/paged.polyfill.js
 git apply vendor/pagedjs/findElement-null-guard.patch
 git apply vendor/pagedjs/nth-of-type-following-double-remove.patch
+git apply vendor/pagedjs/repeat-table-thead.patch
 npm test
 ```
 
-Neither patch is guarded by a read-check alone. `tests/pagedjs-null-guard.test.ts` executes `findElement` against a null node, and `tests/pagedjs-double-remove-guard.test.ts` drives both `onRule` implementations over a rule item that has already been unlinked — so re-vendoring without a patch breaks the build, not just a review.
+No patch is guarded by a read-check alone. `tests/pagedjs-null-guard.test.ts` executes `findElement` against a null node, `tests/pagedjs-double-remove-guard.test.ts` drives both `onRule` implementations over a rule item that has already been unlinked, and `tests/pagedjs-table-thead-guard.test.ts` drives `rebuildAncestors` over a stub table — so re-vendoring without a patch breaks the build, not just a review.

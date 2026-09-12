@@ -818,7 +818,15 @@
 		for (var i = 0; i < ancestors.length; i++) {
 			ancestor = ancestors[i];
 			parent = ancestor.cloneNode(false);
-		
+
+			// multi-exporter patch: repeat a split table's header on the continuation page.
+			// This loop only walks the cut node's own ancestor chain, so a <thead> -- never
+			// an ancestor of a <td> inside <tbody> -- is dropped when a table splits across
+			// a page break, leaving the continuation with no column labels at all.
+			if (parent.nodeName === "TABLE" && ancestor.tHead) {
+				parent.appendChild(ancestor.tHead.cloneNode(true));
+			}
+
 			parent.setAttribute("data-split-from", parent.getAttribute("data-ref"));
 			// ancestor.setAttribute("data-split-to", parent.getAttribute("data-ref"));
 

@@ -589,6 +589,7 @@ function bootstrapScript(pagedJsSource: string): string {
  */
 function paginateScript(html: string, css: string, previewChrome: boolean, mathCss: string): string {
 	return `(async () => {
+	${PIN_TABLE_COLUMN_WIDTHS}
 	${AFTER_PARSED_INSTRUMENT}
 	// Each run builds a fresh Previewer, so the previous one's polisher output has to go
 	// with it — otherwise every refresh leaves another copy of the page rules in the head
@@ -622,6 +623,8 @@ function paginateScript(html: string, css: string, previewChrome: boolean, mathC
 	window.__mxStage = 'building-source';
 	source.innerHTML = ${JSON.stringify(html)};
 	window.__mxSourceElements = source.querySelectorAll('*').length;
+	window.__mxStage = 'measuring-tables';
+	pinTableColumnWidths(source);
 	window.__mxStage = 'creating-previewer';
 	const previewer = new window.Paged.Previewer();
 	window.__mxPreviewer = previewer;
@@ -798,6 +801,50 @@ const STALL_SNAPSHOT_SCRIPT = `(() => {
  * The handlers are instrumented on the Previewer's chunker, which exists as soon as the
  * Previewer is constructed — before `preview()` is called and long before anything hangs.
  */
+/**
+ * Pin every table's column widths, in percent, from its own natural (un-paginated) layout.
+ *
+ * `table-layout: fixed` (see `core/page-css.ts`) needs a definite width to divide among
+ * columns that carry none of their own, and — now that `repeat-table-thead.patch` gives every
+ * page fragment the same header row — every fragment's "first row" is identical, so with no
+ * explicit widths fixed layout would divide the columns dead equally on every page. That is
+ * consistent but not what a table with a long prose column and four short numeric ones wants.
+ *
+ * Run once, on the *source* tree, before it is handed to the paginator: `source` is briefly
+ * attached to `document.body` (which is empty at this point and has no profile stylesheet
+ * applied yet, so the browser's ordinary auto layout measures real natural proportions),
+ * each table's header-row cell widths are read off and turned into percentages, and those
+ * percentages are written as an inline `width` on every cell in the same column — not just
+ * the header's — so whichever row a page break happens to start with still carries the right
+ * number. `source` is detached again immediately after, restoring the state `preview()`
+ * expects.
+ *
+ * A table whose rows don't all have the same cell count — colspan, rowspan, anything
+ * irregular — is left alone entirely rather than partially pinned: fixed layout's equal
+ * division is a safe fallback for a shape this cannot reason about.
+ */
+const PIN_TABLE_COLUMN_WIDTHS = `const pinTableColumnWidths = (root) => {
+	const tables = Array.from(root.querySelectorAll('table'));
+	if (tables.length === 0) return;
+	document.body.appendChild(root);
+	tables.forEach((table) => {
+		const rows = Array.from(table.rows);
+		if (rows.length === 0) return;
+		const headerRow = rows[0];
+		const columnCount = headerRow.cells.length;
+		if (columnCount === 0 || rows.some((row) => row.cells.length !== columnCount)) return;
+		const widths = Array.from(headerRow.cells).map((cell) => cell.getBoundingClientRect().width);
+		const total = widths.reduce((sum, width) => sum + width, 0);
+		if (total <= 0) return;
+		rows.forEach((row) => {
+			Array.from(row.cells).forEach((cell, index) => {
+				cell.style.width = ((widths[index] / total) * 100).toFixed(4) + '%';
+			});
+		});
+	});
+	root.remove();
+};`;
+
 const AFTER_PARSED_INSTRUMENT = `const instrumentAfterParsed = (previewer) => {
 	try {
 		const hook = previewer.chunker && previewer.chunker.hooks && previewer.chunker.hooks.afterParsed;
