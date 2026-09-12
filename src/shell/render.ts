@@ -102,7 +102,7 @@ export async function waitForDomStability(
  * `cssclasses` frontmatter, however the user wrote it: a single string, a list of strings, or
  * a string with more than one class in it — Obsidian's own reading view accepts all three.
  */
-function normalizeCssClasses(value: unknown): string[] {
+export function normalizeCssClasses(value: unknown): string[] {
 	const entries = Array.isArray(value) ? value : typeof value === 'string' ? [value] : [];
 	const classes: string[] = [];
 	for (const entry of entries) {

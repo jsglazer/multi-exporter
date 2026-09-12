@@ -52,6 +52,28 @@ export function resolveProfileForPath(
 	return byId.get(resolution.profileId) ?? byId.get(defaultProfileId) ?? profiles[0] ?? null;
 }
 
+/**
+ * Match a note's own `cssclasses` against a profile's id or name, case-insensitively.
+ *
+ * The first class that names a real profile wins, so a note carrying several classes picks
+ * whichever comes first in its frontmatter. `null` means none of them did, and the caller
+ * falls back to folder/default resolution — this is a note-level override, not a replacement
+ * for it.
+ */
+export function resolveProfileByCssClasses(
+	profiles: readonly Profile[],
+	cssClasses: readonly string[],
+): Profile | null {
+	for (const cssClass of cssClasses) {
+		const needle = cssClass.toLowerCase();
+		const match = profiles.find(
+			(profile) => profile.id.toLowerCase() === needle || profile.name.toLowerCase() === needle,
+		);
+		if (match !== undefined) return match;
+	}
+	return null;
+}
+
 /** Set a folder's default profile. `''` sets the vault-wide default mapping. */
 export function setFolderProfile(map: FolderProfileMap, folder: string, profileId: string): FolderProfileMap {
 	return { ...map, [normalizePath(folder)]: profileId };

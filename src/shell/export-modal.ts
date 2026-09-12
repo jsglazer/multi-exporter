@@ -3,12 +3,13 @@ import type { App, SliderComponent, TextComponent, TFile } from 'obsidian';
 import { showDirectoryDialog } from '../adapter/obsidian-internals';
 import { planSeparateExport, singleNoteDestination } from '../core/export-plan';
 import { composeCss } from '../core/pipeline';
-import { resolveProfileForPath } from '../core/profile-resolver';
+import { resolveProfileByCssClasses, resolveProfileForPath } from '../core/profile-resolver';
 import { structuredCloneProfile } from '../core/profiles';
 import { clampPagesTall, clampPagesWide } from '../core/fit-pages';
 import type { AnnotationMode, PluginSettings, Profile } from '../core/types';
 import { announceOutcome, ExportService, maybeOpenExport } from './export-service';
 import { PagedJsWebviewBackend, wrapDocumentSections } from './pagedjs-backend';
+import { normalizeCssClasses } from './render';
 
 /**
  * Single-note export, with the live preview.
@@ -93,7 +94,13 @@ export class ExportModal extends Modal {
 		private readonly service: ExportService,
 	) {
 		super(app);
+		// A note's own `cssclasses` is the more specific signal, so it wins over the folder
+		// default when one of its classes names a real profile — e.g. `cssclasses: console`
+		// picks the "Console" profile even inside a folder mapped to something else.
+		const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter;
+		const cssClasses = normalizeCssClasses(frontmatter?.['cssclasses'] ?? frontmatter?.['cssclass']);
 		this.profile =
+			resolveProfileByCssClasses(settings.profiles, cssClasses) ??
 			resolveProfileForPath(settings.profiles, settings.folderProfiles, file.path, settings.defaultProfileId) ??
 			(settings.profiles[0] as Profile);
 		this.fileName = file.basename;
@@ -128,7 +135,6 @@ export class ExportModal extends Modal {
 
 		new Setting(controls)
 			.setName('Orientation')
-			.setDesc('For this export only. The profile is not modified.')
 			.addDropdown((dropdown) => {
 				dropdown.addOption('profile', 'Profile default');
 				dropdown.addOption('portrait', 'Portrait');
@@ -142,7 +148,6 @@ export class ExportModal extends Modal {
 
 		new Setting(controls)
 			.setName('Fit to page')
-			.setDesc('For this export only. Shrinks the finished pages until the chosen constraint is met.')
 			.addDropdown((dropdown) => {
 				dropdown.addOption('profile', 'Profile default');
 				dropdown.addOption('off', 'Off');
@@ -166,7 +171,6 @@ export class ExportModal extends Modal {
 		// dragging to "3" is worse than typing it.
 		new Setting(controls)
 			.setName('Pages wide')
-			.setDesc('Page-widths of content the width fit allows before it shrinks anything. Blank follows the profile.')
 			.addText((text) => {
 				this.pageInputs.push(text);
 				text
@@ -178,7 +182,6 @@ export class ExportModal extends Modal {
 
 		new Setting(controls)
 			.setName('Pages tall')
-			.setDesc('Fit the note into this many pages by laying it out smaller. Blank or zero means no target.')
 			.addText((text) => {
 				this.pageInputs.push(text);
 				text
@@ -194,7 +197,6 @@ export class ExportModal extends Modal {
 
 		new Setting(controls)
 			.setName('Zoom')
-			.setDesc('Scales the whole PDF, where 100 is unscaled. Fit to page overrides it when on.')
 			.addSlider((slider) => {
 				this.zoomSlider = slider;
 				slider
@@ -207,7 +209,6 @@ export class ExportModal extends Modal {
 			});
 		new Setting(controls)
 			.setName('Annotations')
-			.setDesc('Where md-annotation comments go in this PDF. The sidebar never decides this.')
 			.addDropdown((dropdown) => {
 				dropdown.addOption('profile', 'Profile default');
 				dropdown.addOption('off', 'Off');
@@ -226,7 +227,6 @@ export class ExportModal extends Modal {
 
 		new Setting(controls)
 			.setName('File name')
-			.setDesc('Name for the PDF. Leave it as the note name, or type another. `.pdf` is added for you.')
 			.addText((text) =>
 				text
 					.setPlaceholder(this.file.basename)

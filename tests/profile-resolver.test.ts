@@ -4,6 +4,7 @@ import {
 	mappingsUnder,
 	pruneFolderProfiles,
 	resolveFolderProfile,
+	resolveProfileByCssClasses,
 	resolveProfileForPath,
 	setFolderProfile,
 } from '../src/core/profile-resolver';
@@ -87,6 +88,30 @@ describe('resolveProfileForPath', () => {
 
 	it('returns null only when there are no profiles at all', () => {
 		expect(resolveProfileForPath([], {}, 'a.md', 'article')).toBeNull();
+	});
+});
+
+describe('resolveProfileByCssClasses', () => {
+	const profiles = createDefaultProfiles();
+
+	it('matches a profile id case-insensitively', () => {
+		expect(resolveProfileByCssClasses(profiles, ['Manuscript'])?.id).toBe('manuscript');
+	});
+
+	it('matches a profile name case-insensitively', () => {
+		expect(resolveProfileByCssClasses(profiles, ['dataview'])?.id).toBe('dataview');
+	});
+
+	it('picks the first class that names a real profile, ignoring the rest', () => {
+		expect(resolveProfileByCssClasses(profiles, ['wide', 'article', 'manuscript'])?.id).toBe('article');
+	});
+
+	it('returns null when nothing matches', () => {
+		expect(resolveProfileByCssClasses(profiles, ['readme', 'annotated'])).toBeNull();
+	});
+
+	it('returns null for an empty class list', () => {
+		expect(resolveProfileByCssClasses(profiles, [])).toBeNull();
 	});
 });
 

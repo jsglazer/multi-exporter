@@ -4351,6 +4351,16 @@ function resolveProfileForPath(profiles, map, filePath, defaultProfileId) {
   const resolution = resolveFolderProfile(map, filePath, defaultProfileId);
   return (_c = (_b = (_a = byId.get(resolution.profileId)) != null ? _a : byId.get(defaultProfileId)) != null ? _b : profiles[0]) != null ? _c : null;
 }
+function resolveProfileByCssClasses(profiles, cssClasses) {
+  for (const cssClass of cssClasses) {
+    const needle = cssClass.toLowerCase();
+    const match = profiles.find(
+      (profile) => profile.id.toLowerCase() === needle || profile.name.toLowerCase() === needle
+    );
+    if (match !== void 0) return match;
+  }
+  return null;
+}
 function setFolderProfile(map, folder, profileId) {
   return { ...map, [normalizePath(folder)]: profileId };
 }
@@ -4385,7 +4395,15 @@ var BASE_DOCUMENT_CSS = `/* multi-exporter base \u2014 normalisation, overridden
 html, body { margin: 0; padding: 0; }
 img, svg, video, canvas, iframe { max-width: 100%; height: auto; }
 pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
-table { max-width: 100%; border-collapse: collapse; }
+/* table-layout: fixed keeps every column the same width on every page a table spans. paged.js
+   splits a long table into a separate <table> per page, and with the browser's default
+   'auto' layout each of those fragments sizes its own columns from only the rows that landed
+   on it \u2014 so a column can come out a different width on page 2 than it was on page 1, which
+   reads as "the columns got compressed". Fixed layout takes widths once (from the first row,
+   or equally when none is given) and holds them for every fragment. A profile that wants
+   asymmetric columns can still set them explicitly, e.g. a wider first column via
+   'td:first-child, th:first-child { width: 40%; }'. */
+table { max-width: 100%; border-collapse: collapse; table-layout: fixed; }
 table, th, td { border: 1px solid currentColor; }
 mjx-container { max-width: 100%; }
 mjx-container svg { max-width: 100%; height: auto; }
@@ -56265,7 +56283,7 @@ function trimTrailingSlash(dir) {
 // src/shell/export-modal.ts
 var ExportModal = class extends import_obsidian5.Modal {
   constructor(app, file, settings, service) {
-    var _a;
+    var _a, _b, _c, _d;
     super(app);
     this.file = file;
     this.settings = settings;
@@ -56333,7 +56351,9 @@ var ExportModal = class extends import_obsidian5.Modal {
      */
     this.paginating = null;
     this.repaginateQueued = false;
-    this.profile = (_a = resolveProfileForPath(settings.profiles, settings.folderProfiles, file.path, settings.defaultProfileId)) != null ? _a : settings.profiles[0];
+    const frontmatter = (_a = app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
+    const cssClasses = normalizeCssClasses((_b = frontmatter == null ? void 0 : frontmatter["cssclasses"]) != null ? _b : frontmatter == null ? void 0 : frontmatter["cssclass"]);
+    this.profile = (_d = (_c = resolveProfileByCssClasses(settings.profiles, cssClasses)) != null ? _c : resolveProfileForPath(settings.profiles, settings.folderProfiles, file.path, settings.defaultProfileId)) != null ? _d : settings.profiles[0];
     this.fileName = file.basename;
   }
   onOpen() {
@@ -56358,7 +56378,7 @@ var ExportModal = class extends import_obsidian5.Modal {
         void this.repaginate();
       });
     });
-    new import_obsidian5.Setting(controls).setName("Orientation").setDesc("For this export only. The profile is not modified.").addDropdown((dropdown) => {
+    new import_obsidian5.Setting(controls).setName("Orientation").addDropdown((dropdown) => {
       dropdown.addOption("profile", "Profile default");
       dropdown.addOption("portrait", "Portrait");
       dropdown.addOption("landscape", "Landscape");
@@ -56368,7 +56388,7 @@ var ExportModal = class extends import_obsidian5.Modal {
         void this.repaginate();
       });
     });
-    new import_obsidian5.Setting(controls).setName("Fit to page").setDesc("For this export only. Shrinks the finished pages until the chosen constraint is met.").addDropdown((dropdown) => {
+    new import_obsidian5.Setting(controls).setName("Fit to page").addDropdown((dropdown) => {
       dropdown.addOption("profile", "Profile default");
       dropdown.addOption("off", "Off");
       dropdown.addOption("width", "Fit width");
@@ -56381,26 +56401,26 @@ var ExportModal = class extends import_obsidian5.Modal {
         if (this.pagesTallTarget() > 0 || this.fit === "off") void this.repaginate();
       });
     });
-    new import_obsidian5.Setting(controls).setName("Pages wide").setDesc("Page-widths of content the width fit allows before it shrinks anything. Blank follows the profile.").addText((text) => {
+    new import_obsidian5.Setting(controls).setName("Pages wide").addText((text) => {
       this.pageInputs.push(text);
       text.setPlaceholder(String(clampPagesWide(this.profile.page.fitPagesWide))).onChange((value) => {
         this.pagesWide = value.trim() === "" ? null : clampPagesWide(Number(value));
       });
     });
-    new import_obsidian5.Setting(controls).setName("Pages tall").setDesc("Fit the note into this many pages by laying it out smaller. Blank or zero means no target.").addText((text) => {
+    new import_obsidian5.Setting(controls).setName("Pages tall").addText((text) => {
       this.pageInputs.push(text);
       text.setPlaceholder(String(clampPagesTall(this.profile.page.fitPagesTall))).onChange((value) => {
         this.pagesTall = value.trim() === "" ? null : clampPagesTall(Number(value));
         void this.repaginate();
       });
     });
-    new import_obsidian5.Setting(controls).setName("Zoom").setDesc("Scales the whole PDF, where 100 is unscaled. Fit to page overrides it when on.").addSlider((slider) => {
+    new import_obsidian5.Setting(controls).setName("Zoom").addSlider((slider) => {
       this.zoomSlider = slider;
       slider.setLimits(ZOOM_MIN, ZOOM_MAX, ZOOM_STEP).setValue(clampZoom(this.profile.page.printScale)).setDynamicTooltip().onChange((value) => {
         this.zoom = value;
       });
     });
-    new import_obsidian5.Setting(controls).setName("Annotations").setDesc("Where md-annotation comments go in this PDF. The sidebar never decides this.").addDropdown((dropdown) => {
+    new import_obsidian5.Setting(controls).setName("Annotations").addDropdown((dropdown) => {
       dropdown.addOption("profile", "Profile default");
       dropdown.addOption("off", "Off");
       dropdown.addOption("gutter", "Margin cards");
@@ -56412,7 +56432,7 @@ var ExportModal = class extends import_obsidian5.Modal {
       });
     });
     this.syncFitControls();
-    new import_obsidian5.Setting(controls).setName("File name").setDesc("Name for the PDF. Leave it as the note name, or type another. `.pdf` is added for you.").addText(
+    new import_obsidian5.Setting(controls).setName("File name").addText(
       (text) => text.setPlaceholder(this.file.basename).setValue(this.fileName).onChange((value) => {
         this.fileName = value;
       })
