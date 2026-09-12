@@ -86,6 +86,14 @@ interface ExcalidrawAutomateApi {
 		loader?: unknown,
 		theme?: string,
 		padding?: number,
+		/**
+		 * Defaults to `false` in the plugin itself, which renders a note-embed box's link as
+		 * the literal wikilink text (`[[CurveShifts]]`) instead of an `obsidian://` URL — the
+		 * shell asks for `true` explicitly so a box's link is always the URL form
+		 * `resolveEmbedLinkTarget` parses.
+		 */
+		convertMarkdownLinksToObsidianURLs?: boolean,
+		includeInternalLinks?: boolean,
 	): Promise<SVGSVGElement>;
 }
 

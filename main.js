@@ -55829,7 +55829,7 @@ async function renderExcalidrawBoard(app, file, container, component, ancestors)
   }
   let svg;
   try {
-    svg = await automate.createSVG(file.path, true);
+    svg = await automate.createSVG(file.path, true, void 0, void 0, void 0, void 0, true);
   } catch (error2) {
     placeholder(container, `This Excalidraw drawing could not be rendered: ${errorMessage(error2)}`);
     return;
@@ -55917,7 +55917,8 @@ function growToFitOverflow(svg, swapped) {
 function anchorHref(anchor) {
   var _a;
   const href = (_a = anchor.getAttribute("href")) != null ? _a : anchor.getAttributeNS("http://www.w3.org/1999/xlink", "href");
-  return href !== null && href.startsWith("obsidian://") ? href : null;
+  if (href === null) return null;
+  return href.startsWith("obsidian://") || href.startsWith("[[") ? href : null;
 }
 function placeholder(container, text) {
   const el = activeDocument.createElement("p");

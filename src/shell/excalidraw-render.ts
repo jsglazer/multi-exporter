@@ -46,7 +46,7 @@ export async function renderExcalidrawBoard(
 
 	let svg: SVGSVGElement;
 	try {
-		svg = await automate.createSVG(file.path, true);
+		svg = await automate.createSVG(file.path, true, undefined, undefined, undefined, undefined, true);
 	} catch (error) {
 		placeholder(container, `This Excalidraw drawing could not be rendered: ${errorMessage(error)}`);
 		return;
@@ -171,10 +171,16 @@ function growToFitOverflow(svg: SVGSVGElement, swapped: readonly SwappedBox[]): 
 	}
 }
 
-/** An SVG `<a>`'s link, whichever attribute form rendered it (plain `href` or `xlink:href`). */
+/**
+ * An SVG `<a>`'s link, whichever attribute form rendered it (plain `href` or `xlink:href`),
+ * and whichever shape Excalidraw wrote it in — an `obsidian://` URL is asked for explicitly
+ * above, but a wikilink is accepted too so a future default change on Excalidraw's side
+ * degrades to "still works" rather than "silently stops swapping anything".
+ */
 function anchorHref(anchor: SVGAElement): string | null {
 	const href = anchor.getAttribute('href') ?? anchor.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
-	return href !== null && href.startsWith('obsidian://') ? href : null;
+	if (href === null) return null;
+	return href.startsWith('obsidian://') || href.startsWith('[[') ? href : null;
 }
 
 function placeholder(container: HTMLElement, text: string): void {
