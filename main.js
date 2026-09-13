@@ -4323,6 +4323,21 @@ function findEnclosingExcalidrawBoards(app, active) {
   const depth = (board) => boards.filter((other) => other.containerEl.contains(board.containerEl)).length;
   return boards.sort((a, b) => depth(b) - depth(a)).map((board) => board.file);
 }
+function getExcalidrawThemeVariables(app, path) {
+  var _a;
+  for (const leaf of app.workspace.getLeavesOfType(EXCALIDRAW_VIEW_TYPE)) {
+    const view = leaf.view;
+    if (((_a = view.file) == null ? void 0 : _a.path) !== path) continue;
+    const themed = view.containerEl.querySelector('[style*="--bold-color"]');
+    if (themed === null) continue;
+    const variables = {};
+    for (const name of Array.from(themed.style)) {
+      if (name.startsWith("--")) variables[name] = themed.style.getPropertyValue(name).trim();
+    }
+    return variables;
+  }
+  return {};
+}
 var MD_ANNOTATION_STRIP_CLASSES = {
   unwrap: ["mdann-hl", "mdann-anchor"],
   remove: ["mdann-marker", "mdann-gutter-host", "mdann-gutter-card", "mdann-gutter-leader", "mdann-gutter-tick"],
@@ -39618,6 +39633,21 @@ function contentScaleCss(scale2) {
 .pagedjs_page_content > div { zoom: ${bounded}; }
 `;
 }
+function applyFitInputs(page, inputs) {
+  const { pagesWide, pagesTall, zoom } = inputs;
+  if (pagesWide !== null || pagesTall !== null) {
+    const fitAxis = pagesWide !== null && pagesTall !== null ? "both" : pagesWide !== null ? "width" : "height";
+    return {
+      ...page,
+      fitToPage: true,
+      fitAxis,
+      fitPagesWide: pagesWide != null ? pagesWide : 1,
+      fitPagesTall: pagesTall != null ? pagesTall : 0
+    };
+  }
+  if (zoom !== null) return { ...page, fitToPage: false, printScale: zoom };
+  return { ...page };
+}
 
 // src/shell/fit-scale.ts
 function fitScaleScript(axis, pagesWide = 1) {
@@ -56078,7 +56108,8 @@ function absoluteUrls(css, base) {
 
 // src/shell/style-snapshot.ts
 var XHTML_NAMESPACE = "http://www.w3.org/1999/xhtml";
-var OPAQUE_TAGS = /* @__PURE__ */ new Set(["svg", "math", "mjx-container"]);
+var MATH_TAGS = /* @__PURE__ */ new Set(["mjx-container"]);
+var LIMITED_PROPERTIES = ["font-family", "color"];
 var VOID_TAGS = /* @__PURE__ */ new Set(["area", "br", "col", "embed", "hr", "img", "input", "source", "track", "wbr"]);
 function freezeComputedStyles(root) {
   var _a;
@@ -56086,13 +56117,13 @@ function freezeComputedStyles(root) {
   const families = /* @__PURE__ */ new Set();
   if (view === null) return families;
   const plans = [];
-  for (const element of htmlElementsUnder(root)) {
+  for (const { element, limited } of htmlElementsUnder(root)) {
     const computed = view.getComputedStyle(element);
     families.add(computed.getPropertyValue("font-family"));
-    const canHoldChildren = !VOID_TAGS.has(element.tagName.toLowerCase());
+    const canHoldChildren = !limited && !VOID_TAGS.has(element.tagName.toLowerCase());
     plans.push({
       element,
-      declarations: declarationsOf(computed),
+      declarations: declarationsOf(computed, limited ? LIMITED_PROPERTIES : SNAPSHOT_PROPERTIES),
       before: canHoldChildren ? pseudoPlan(view.getComputedStyle(element, "::before")) : null,
       after: canHoldChildren ? pseudoPlan(view.getComputedStyle(element, "::after")) : null
     });
@@ -56108,17 +56139,17 @@ function freezeComputedStyles(root) {
 }
 function htmlElementsUnder(root) {
   const found = [];
-  const visit = (element) => {
+  const visit = (element, limited) => {
     if (element.namespaceURI !== XHTML_NAMESPACE) return;
-    found.push(element);
-    if (OPAQUE_TAGS.has(element.tagName.toLowerCase())) return;
-    for (const child of Array.from(element.children)) visit(child);
+    found.push({ element, limited });
+    const inMath = limited || MATH_TAGS.has(element.tagName.toLowerCase());
+    for (const child of Array.from(element.children)) visit(child, inMath);
   };
-  visit(root);
+  visit(root, false);
   return found;
 }
-function declarationsOf(computed) {
-  return serializeDeclarations(SNAPSHOT_PROPERTIES.map((name) => [name, computed.getPropertyValue(name)]));
+function declarationsOf(computed, properties = SNAPSHOT_PROPERTIES) {
+  return serializeDeclarations(properties.map((name) => [name, computed.getPropertyValue(name)]));
 }
 function pseudoPlan(computed) {
   const text = pseudoContentText(computed.getPropertyValue("content"));
@@ -56168,13 +56199,16 @@ async function renderExcalidrawBoard(app, file, container, component, ancestors)
   }
   if (swapped.length === 0) return;
   await waitForDomStability(container);
+  const themeVariables = getExcalidrawThemeVariables(app, file.path);
   const fontStacks = /* @__PURE__ */ new Set();
   for (const box of swapped) {
     if (box.canvasNode === null) continue;
     releaseHeightIfOverflowing(box.canvasNode, box.declaredHeight);
     const wrapper = box.foreignObject.firstElementChild;
     if (wrapper === null) continue;
+    wrapper.setCssProps(themeVariables);
     for (const stack of freezeComputedStyles(wrapper)) fontStacks.add(stack);
+    for (const name of Object.keys(themeVariables)) wrapper.style.removeProperty(name);
   }
   growToFitOverflow(svg, swapped);
   if (fontStacks.size > 0) addStyleToSvg(svg, await fontFaceCssFor(app, fontStacks));
@@ -56867,15 +56901,9 @@ var ExportModal = class extends import_obsidian6.Modal {
      */
     this.orientation = "profile";
     /**
-     * Per-export fit-to-page, on the same terms as `orientation` above.
-     *
-     * `'profile'` defers; `'off'` is not the same thing, because a profile that ships fit-to-page
-     * on has to be overridable in the direction that turns it *off* for one run — a two-state
-     * toggle could only ever express "on".
-     */
-    this.fit = "profile";
-    /**
      * Per-export zoom, as a percentage. `null` means "whatever the profile says".
+     *
+     * Moved with both page inputs empty, it also turns fitting off for this export.
      *
      * The same number `printScale` has always been — Chromium's print scale, applied to the
      * finished pages — reached from the modal rather than only from the profile, because
@@ -56883,7 +56911,7 @@ var ExportModal = class extends import_obsidian6.Modal {
      */
     this.zoom = null;
     /**
-     * Per-export annotation mode, on the same terms as `orientation` and `fit` above.
+     * Per-export annotation mode, on the same terms as `orientation` above.
      *
      * The profile flag stays authoritative when this is `'profile'`, which is the point:
      * nothing about `md-annotation`'s sidebar toggles reaches the PDF, and never will. What
@@ -56896,15 +56924,13 @@ var ExportModal = class extends import_obsidian6.Modal {
      * Per-export page targets. `null` means "whatever the profile says".
      *
      * `pagesWide` widens the fit's tolerance; `pagesTall` is a page-count target that
-     * re-paginates. Both are only consulted when fit-to-page will actually run — see
-     * `core/fit-pages.ts` for why they are two different mechanisms.
+     * re-paginates. A number in either turns fitting on for that axis — see `applyFitInputs`
+     * in `core/fit-pages.ts`, which also explains why they are two different mechanisms.
      */
     this.pagesWide = null;
     this.pagesTall = null;
-    /** Held so the fit and profile dropdowns can grey it out and re-seat it. */
+    /** Held so the page inputs and profile dropdown can grey it out and re-seat it. */
     this.zoomSlider = null;
-    /** Held for the same reason: the page inputs are dead while fit-to-page is off. */
-    this.pageInputs = [];
     /**
      * The pagination currently in flight, plus whether another was asked for while it ran.
      *
@@ -56955,36 +56981,27 @@ var ExportModal = class extends import_obsidian6.Modal {
         void this.repaginate();
       });
     });
-    new import_obsidian6.Setting(controls).setName("Fit to page").addDropdown((dropdown) => {
-      dropdown.addOption("profile", "Profile default");
-      dropdown.addOption("off", "Off");
-      dropdown.addOption("width", "Fit width");
-      dropdown.addOption("height", "Fit height");
-      dropdown.addOption("both", "Fit both");
-      dropdown.setValue(this.fit);
-      dropdown.onChange((value) => {
-        this.fit = isFitOverride(value) ? value : "profile";
-        this.syncFitControls();
-        if (this.pagesTallTarget() > 0 || this.fit === "off") void this.repaginate();
-      });
-    });
-    new import_obsidian6.Setting(controls).setName("Pages wide").addText((text) => {
-      this.pageInputs.push(text);
+    new import_obsidian6.Setting(controls).setName("Pages wide").setDesc("A number fits the width to that many pages.").addText((text) => {
       text.setPlaceholder(String(clampPagesWide(this.profile.page.fitPagesWide))).onChange((value) => {
-        this.pagesWide = value.trim() === "" ? null : clampPagesWide(Number(value));
+        this.updateFitInputs(() => {
+          this.pagesWide = value.trim() === "" ? null : clampPagesWide(Number(value));
+        });
       });
     });
-    new import_obsidian6.Setting(controls).setName("Pages tall").addText((text) => {
-      this.pageInputs.push(text);
+    new import_obsidian6.Setting(controls).setName("Pages tall").setDesc("A number fits the height to that many pages.").addText((text) => {
       text.setPlaceholder(String(clampPagesTall(this.profile.page.fitPagesTall))).onChange((value) => {
-        this.pagesTall = value.trim() === "" ? null : clampPagesTall(Number(value));
-        void this.repaginate();
+        this.updateFitInputs(() => {
+          const pages = value.trim() === "" ? 0 : clampPagesTall(Number(value));
+          this.pagesTall = pages === 0 ? null : pages;
+        });
       });
     });
     new import_obsidian6.Setting(controls).setName("Zoom").addSlider((slider) => {
       this.zoomSlider = slider;
       slider.setLimits(ZOOM_MIN, ZOOM_MAX, ZOOM_STEP).setValue(clampZoom(this.profile.page.printScale)).setDynamicTooltip().onChange((value) => {
-        this.zoom = value;
+        this.updateFitInputs(() => {
+          this.zoom = value;
+        });
       });
     });
     new import_obsidian6.Setting(controls).setName("Annotations").addDropdown((dropdown) => {
@@ -57056,20 +57073,12 @@ var ExportModal = class extends import_obsidian6.Modal {
    * tab, and a per-export choice that quietly rewrote it would outlive the modal.
    */
   effectiveProfile() {
-    if (this.orientation === "profile" && this.fit === "profile" && this.zoom === null && this.annotations === "profile" && this.pagesWide === null && this.pagesTall === null) {
+    if (this.orientation === "profile" && this.zoom === null && this.annotations === "profile" && this.pagesWide === null && this.pagesTall === null) {
       return this.profile;
     }
     const copy = structuredCloneProfile(this.profile);
     if (this.orientation !== "profile") copy.page.orientation = this.orientation;
-    if (this.fit === "off") {
-      copy.page.fitToPage = false;
-    } else if (this.fit !== "profile") {
-      copy.page.fitToPage = true;
-      copy.page.fitAxis = this.fit;
-    }
-    if (this.pagesWide !== null) copy.page.fitPagesWide = this.pagesWide;
-    if (this.pagesTall !== null) copy.page.fitPagesTall = this.pagesTall;
-    if (this.zoom !== null) copy.page.printScale = this.zoom;
+    copy.page = applyFitInputs(copy.page, { pagesWide: this.pagesWide, pagesTall: this.pagesTall, zoom: this.zoom });
     if (this.annotations !== "profile") copy.flags.annotationMode = this.annotations;
     return copy;
   }
@@ -57082,30 +57091,33 @@ var ExportModal = class extends import_obsidian6.Modal {
       this.fail(error2);
     }
   }
-  /** Whether fit-to-page will run for this export, profile default included. */
-  fitsToPage() {
-    return this.fit === "profile" ? this.profile.page.fitToPage === true : this.fit !== "off";
-  }
   /** The page-count target this export will actually use, profile default included. */
   pagesTallTarget() {
-    var _a;
-    if (!this.fitsToPage()) return 0;
-    return clampPagesTall((_a = this.pagesTall) != null ? _a : this.profile.page.fitPagesTall);
+    const page = this.effectiveProfile().page;
+    return page.fitToPage ? clampPagesTall(page.fitPagesTall) : 0;
   }
   /**
-   * Grey out the controls fit-to-page has taken over, or that it has switched off.
+   * Change a fit input, then re-paginate only if that changed the page-count target. The print
+   * scale is applied by `printToPDF` after the pages are laid out, so it changes nothing on
+   * screen — but a page target changes the pagination itself, and the preview is the output.
+   */
+  updateFitInputs(change) {
+    const before = this.pagesTallTarget();
+    change();
+    this.syncFitControls();
+    if (this.pagesTallTarget() !== before) void this.repaginate();
+  }
+  /**
+   * Grey out the zoom slider while a page input has a number.
    *
    * A control that silently does nothing is worse than one that is visibly unavailable: the
-   * fit measurement *replaces* the print scale, it does not compose with it, and a zoom that
-   * looked live but changed nothing about the PDF would read as a bug. The two page inputs
-   * are the mirror image — they are read only while fitting is on, so they go dead when it
-   * is off.
+   * fit measurement *replaces* the print scale, it does not compose with it. With both page
+   * inputs empty the slider stays live even for a profile that fits by default, because moving
+   * it is how one export turns that fit off. The page inputs are always live.
    */
   syncFitControls() {
     var _a;
-    const fitting = this.fitsToPage();
-    (_a = this.zoomSlider) == null ? void 0 : _a.setDisabled(fitting);
-    for (const input of this.pageInputs) input.setDisabled(!fitting);
+    (_a = this.zoomSlider) == null ? void 0 : _a.setDisabled(this.pagesWide !== null || this.pagesTall !== null);
   }
   async paginateOnce() {
     const backend = this.backend;
@@ -57200,9 +57212,6 @@ function describeError(error2) {
 }
 function isAnnotationOverride(value) {
   return value === "profile" || value === "off" || value === "gutter" || value === "endnotes";
-}
-function isFitOverride(value) {
-  return value === "profile" || value === "off" || value === "width" || value === "height" || value === "both";
 }
 var ZOOM_MIN = 40;
 var ZOOM_MAX = 200;

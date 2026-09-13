@@ -21,6 +21,8 @@
  * behaviour is testable without a browser; the backend runs the loop.
  */
 
+import type { FitAxis, PageConfig } from './types';
+
 /** The most page-widths of tolerance worth offering. Past this the fit stops meaning anything. */
 export const MAX_PAGES_WIDE = 10;
 
@@ -106,4 +108,47 @@ export function contentScaleCss(scale: number): string {
 	if (!Number.isFinite(scale) || scale >= 1) return '';
 	const bounded = Math.max(MIN_CONTENT_SCALE, scale);
 	return `\n/* Fit to page count: lay the flow out smaller so more of it fits on each page. */\n.pagedjs_page_content > div { zoom: ${bounded}; }\n`;
+}
+
+/**
+ * The export dialog's fit inputs. Each is `null` when the user left it alone.
+ *
+ * - `pagesWide` / `pagesTall` — what the user typed into the two page inputs.
+ * - `zoom` — the zoom slider's percentage, once it has been moved.
+ */
+export interface FitInputs {
+	readonly pagesWide: number | null;
+	readonly pagesTall: number | null;
+	readonly zoom: number | null;
+}
+
+/**
+ * The page settings one export actually uses, given the dialog's inputs.
+ *
+ * There is no separate "fit to page" switch in the dialog, because the numbers already say it:
+ *
+ * - **A number in either page input** turns fitting on, for the axis (or axes) that has a number:
+ *   pages wide alone fits width, pages tall alone fits height and targets that page count, both
+ *   fit both. The zoom slider is ignored, since the fit replaces the print scale.
+ * - **Both page inputs empty, zoom moved** turns fitting off and prints at that zoom. This is how
+ *   one export of a profile that ships fit-to-page on (Excalidraw's) opts out of it.
+ * - **Nothing touched** is the profile exactly as it is saved.
+ *
+ * Returns a new object; `page` is never modified, because it belongs to a profile every other
+ * export shares.
+ */
+export function applyFitInputs(page: PageConfig, inputs: FitInputs): PageConfig {
+	const { pagesWide, pagesTall, zoom } = inputs;
+	if (pagesWide !== null || pagesTall !== null) {
+		const fitAxis: FitAxis = pagesWide !== null && pagesTall !== null ? 'both' : pagesWide !== null ? 'width' : 'height';
+		return {
+			...page,
+			fitToPage: true,
+			fitAxis,
+			fitPagesWide: pagesWide ?? 1,
+			fitPagesTall: pagesTall ?? 0,
+		};
+	}
+	if (zoom !== null) return { ...page, fitToPage: false, printScale: zoom };
+	return { ...page };
 }

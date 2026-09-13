@@ -168,6 +168,33 @@ export function findEnclosingExcalidrawBoards(app: App, active: View | null): TF
 	return boards.sort((a, b) => depth(b) - depth(a)).map((board) => board.file);
 }
 
+/**
+ * The CSS custom properties Excalidraw's canvas theme sets on an open board, for the board at
+ * `path`, or an empty object when that board is not open in any pane.
+ *
+ * Excalidraw derives a palette from the canvas background and Obsidian's accent colour
+ * (`appState.dynamicStyle` in its `main.js`) and writes it as inline custom properties on the
+ * board's container, `--bold-color` among them. A note embedded on the board inherits them, which
+ * is why bold text in an embed is accent-purple on screen and plain black anywhere else. Found by
+ * the one property every palette includes rather than by a class name, and read from the inline
+ * style — exactly what Excalidraw set — not the computed style, which would drag in every Obsidian
+ * variable too.
+ */
+export function getExcalidrawThemeVariables(app: App, path: string): Record<string, string> {
+	for (const leaf of app.workspace.getLeavesOfType(EXCALIDRAW_VIEW_TYPE)) {
+		const view = leaf.view as View & { file?: TFile | null };
+		if (view.file?.path !== path) continue;
+		const themed = view.containerEl.querySelector<HTMLElement>('[style*="--bold-color"]');
+		if (themed === null) continue;
+		const variables: Record<string, string> = {};
+		for (const name of Array.from(themed.style)) {
+			if (name.startsWith('--')) variables[name] = themed.style.getPropertyValue(name).trim();
+		}
+		return variables;
+	}
+	return {};
+}
+
 /* ------------------------------------------------------------------- md-annotation -- */
 
 /**

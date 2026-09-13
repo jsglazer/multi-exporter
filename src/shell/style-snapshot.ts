@@ -9,11 +9,17 @@ import { SNAPSHOT_PROPERTIES, pseudoContentText, serializeDeclarations } from '.
 const XHTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
 
 /**
- * Elements whose own descendants are left alone: their rendering is driven by a stylesheet that is
- * already carried into the guest separately (MathJax's), or is not CSS-box layout at all (SVG),
- * and freezing the resolved values of every glyph node would only fight it.
+ * Elements whose descendants get only `LIMITED_PROPERTIES` frozen. MathJax's generated stylesheet
+ * travels into the guest separately and lays out every glyph box from TeX metrics; freezing the
+ * resolved box model of each glyph node would fight it. But a snippet that sets `font-family` on
+ * `*` (as an Excalidraw embed snippet typically does) reaches MathJax's glyph elements on screen,
+ * so digits in `$0.32 > 1$` draw in Virgil there — and without the font frozen they fall back to
+ * MathJax's own font in print.
  */
-const OPAQUE_TAGS = new Set(['svg', 'math', 'mjx-container']);
+const MATH_TAGS = new Set(['mjx-container']);
+
+/** What is frozen inside `MATH_TAGS`: how glyphs are drawn, never how they are laid out. */
+const LIMITED_PROPERTIES: readonly string[] = ['font-family', 'color'];
 
 /** Elements that cannot hold a child, so a `::before`/`::after` stand-in has nowhere to go. */
 const VOID_TAGS = new Set(['area', 'br', 'col', 'embed', 'hr', 'img', 'input', 'source', 'track', 'wbr']);
@@ -44,13 +50,14 @@ export function freezeComputedStyles(root: HTMLElement): Set<string> {
 	if (view === null) return families;
 
 	const plans: ElementPlan[] = [];
-	for (const element of htmlElementsUnder(root)) {
+	for (const { element, limited } of htmlElementsUnder(root)) {
 		const computed = view.getComputedStyle(element);
 		families.add(computed.getPropertyValue('font-family'));
-		const canHoldChildren = !VOID_TAGS.has(element.tagName.toLowerCase());
+		// MathJax draws each glyph as a `::before`, so a stand-in would duplicate it.
+		const canHoldChildren = !limited && !VOID_TAGS.has(element.tagName.toLowerCase());
 		plans.push({
 			element,
-			declarations: declarationsOf(computed),
+			declarations: declarationsOf(computed, limited ? LIMITED_PROPERTIES : SNAPSHOT_PROPERTIES),
 			before: canHoldChildren ? pseudoPlan(view.getComputedStyle(element, '::before')) : null,
 			after: canHoldChildren ? pseudoPlan(view.getComputedStyle(element, '::after')) : null,
 		});
@@ -71,20 +78,24 @@ export function freezeComputedStyles(root: HTMLElement): Set<string> {
 	return families;
 }
 
-function htmlElementsUnder(root: HTMLElement): HTMLElement[] {
-	const found: HTMLElement[] = [];
-	const visit = (element: Element): void => {
+/**
+ * Every HTML element under `root`, each flagged `limited` when it sits inside a `MATH_TAGS`
+ * element. SVG (and MathML) subtrees are skipped outright: not CSS-box layout.
+ */
+function htmlElementsUnder(root: HTMLElement): { element: HTMLElement; limited: boolean }[] {
+	const found: { element: HTMLElement; limited: boolean }[] = [];
+	const visit = (element: Element, limited: boolean): void => {
 		if (element.namespaceURI !== XHTML_NAMESPACE) return;
-		found.push(element as HTMLElement);
-		if (OPAQUE_TAGS.has(element.tagName.toLowerCase())) return;
-		for (const child of Array.from(element.children)) visit(child);
+		found.push({ element: element as HTMLElement, limited });
+		const inMath = limited || MATH_TAGS.has(element.tagName.toLowerCase());
+		for (const child of Array.from(element.children)) visit(child, inMath);
 	};
-	visit(root);
+	visit(root, false);
 	return found;
 }
 
-function declarationsOf(computed: CSSStyleDeclaration): string {
-	return serializeDeclarations(SNAPSHOT_PROPERTIES.map((name) => [name, computed.getPropertyValue(name)] as const));
+function declarationsOf(computed: CSSStyleDeclaration, properties: readonly string[] = SNAPSHOT_PROPERTIES): string {
+	return serializeDeclarations(properties.map((name) => [name, computed.getPropertyValue(name)] as const));
 }
 
 function pseudoPlan(computed: CSSStyleDeclaration): PseudoPlan | null {

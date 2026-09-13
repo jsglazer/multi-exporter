@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import type { PageConfig } from '../src/core/types';
 import {
+	applyFitInputs,
 	clampPagesTall,
 	clampPagesWide,
 	contentScaleCss,
@@ -129,5 +131,60 @@ describe('contentScaleCss', () => {
 
 	it('holds the floor even when handed something smaller', () => {
 		expect(contentScaleCss(0.05)).toContain(`zoom: ${MIN_CONTENT_SCALE}`);
+	});
+});
+
+describe('applyFitInputs', () => {
+	const page = {
+		size: 'letter',
+		orientation: 'portrait',
+		margins: { top: '1in', right: '1in', bottom: '1in', left: '1in' },
+		fitToPage: false,
+		fitAxis: 'both',
+		fitPagesWide: 2,
+		fitPagesTall: 5,
+		printScale: 100,
+		orphans: 2,
+		widows: 2,
+	} as unknown as PageConfig;
+	const none = { pagesWide: null, pagesTall: null, zoom: null };
+
+	it('leaves the profile exactly as saved when nothing was touched', () => {
+		expect(applyFitInputs(page, none)).toEqual(page);
+		expect(applyFitInputs(page, none)).not.toBe(page);
+	});
+
+	it('fits width only when only pages wide has a number, with no page-count target', () => {
+		const result = applyFitInputs(page, { ...none, pagesWide: 1 });
+		expect(result).toMatchObject({ fitToPage: true, fitAxis: 'width', fitPagesWide: 1, fitPagesTall: 0 });
+	});
+
+	it('fits height and targets the page count when only pages tall has a number', () => {
+		const result = applyFitInputs(page, { ...none, pagesTall: 1 });
+		expect(result).toMatchObject({ fitToPage: true, fitAxis: 'height', fitPagesWide: 1, fitPagesTall: 1 });
+	});
+
+	it('fits both when both page inputs have numbers', () => {
+		expect(applyFitInputs(page, { ...none, pagesWide: 2, pagesTall: 3 })).toMatchObject({
+			fitToPage: true,
+			fitAxis: 'both',
+			fitPagesWide: 2,
+			fitPagesTall: 3,
+		});
+	});
+
+	it('ignores zoom while a page input has a number, since the fit replaces the print scale', () => {
+		expect(applyFitInputs(page, { pagesWide: 1, pagesTall: null, zoom: 60 })).toMatchObject({ fitToPage: true, printScale: 100 });
+	});
+
+	it('turns fitting off and uses the zoom when only the slider was moved, even for a profile that fits', () => {
+		const fitting = { ...page, fitToPage: true };
+		expect(applyFitInputs(fitting, { ...none, zoom: 80 })).toMatchObject({ fitToPage: false, printScale: 80 });
+	});
+
+	it('never modifies the profile it was given', () => {
+		const before = structuredClone(page);
+		applyFitInputs(page, { pagesWide: 3, pagesTall: 4, zoom: 50 });
+		expect(page).toEqual(before);
 	});
 });

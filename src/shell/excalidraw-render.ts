@@ -1,6 +1,6 @@
 import { MarkdownRenderer } from 'obsidian';
 import type { App, Component, TFile } from 'obsidian';
-import { getExcalidrawAutomate } from '../adapter/obsidian-internals';
+import { getExcalidrawAutomate, getExcalidrawThemeVariables } from '../adapter/obsidian-internals';
 import { cssPixels, isExcalidrawNote, resolveEmbedLinkTarget } from '../core/excalidraw';
 import { waitForDomStability } from './dom-stability';
 import { fontFaceCssFor } from './excalidraw-fonts';
@@ -99,13 +99,19 @@ export async function renderExcalidrawBoard(
 	if (swapped.length === 0) return;
 	await waitForDomStability(container);
 
+	const themeVariables = getExcalidrawThemeVariables(app, file.path);
 	const fontStacks = new Set<string>();
 	for (const box of swapped) {
 		if (box.canvasNode === null) continue;
 		releaseHeightIfOverflowing(box.canvasNode, box.declaredHeight);
-		const wrapper = box.foreignObject.firstElementChild;
+		const wrapper = box.foreignObject.firstElementChild as HTMLElement | null;
 		if (wrapper === null) continue;
-		for (const stack of freezeComputedStyles(wrapper as HTMLElement)) fontStacks.add(stack);
+		// Excalidraw's canvas palette, applied only for the freeze: the frozen styles carry the
+		// resolved colours, so the variables themselves are removed again rather than shipped
+		// to the guest, where nothing reads them.
+		wrapper.setCssProps(themeVariables);
+		for (const stack of freezeComputedStyles(wrapper)) fontStacks.add(stack);
+		for (const name of Object.keys(themeVariables)) wrapper.style.removeProperty(name);
 	}
 	growToFitOverflow(svg, swapped);
 	if (fontStacks.size > 0) addStyleToSvg(svg, await fontFaceCssFor(app, fontStacks));
