@@ -33,7 +33,7 @@ export class ObsidianDocumentRenderer implements DocumentRenderer {
 		component.load();
 
 		const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
-		if (isExcalidrawNote(frontmatter)) {
+		if (isExcalidrawNote(file.path, frontmatter)) {
 			// An .excalidraw.md file's own markdown is just the plugin's save-format scaffold;
 			// the canvas it actually draws is rendered by Excalidraw's own API instead. See
 			// `core/excalidraw.ts` for why this note type needs its own path.

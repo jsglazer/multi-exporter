@@ -105,7 +105,7 @@ export class ExportModal extends Modal {
 		const cssClasses = normalizeCssClasses(frontmatter?.['cssclasses'] ?? frontmatter?.['cssclass']);
 		this.profile =
 			resolveProfileByCssClasses(settings.profiles, cssClasses) ??
-			(isExcalidrawNote(frontmatter) ? resolveProfileForExcalidraw(settings.profiles) : null) ??
+			(isExcalidrawNote(file.path, frontmatter) ? resolveProfileForExcalidraw(settings.profiles) : null) ??
 			resolveProfileForPath(settings.profiles, settings.folderProfiles, file.path, settings.defaultProfileId) ??
 			(settings.profiles[0] as Profile);
 		this.fileName = file.basename;

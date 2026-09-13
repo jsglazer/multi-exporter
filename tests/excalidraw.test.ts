@@ -2,14 +2,24 @@ import { describe, expect, it } from 'vitest';
 import { isExcalidrawNote, resolveEmbedLinkTarget } from '../src/core/excalidraw';
 
 describe('isExcalidrawNote', () => {
-	it("recognises the plugin's own frontmatter flag", () => {
-		expect(isExcalidrawNote({ 'excalidraw-plugin': 'parsed' })).toBe(true);
-		expect(isExcalidrawNote({ 'excalidraw-plugin': 'raw' })).toBe(true);
+	it('recognises the .excalidraw.md filename convention regardless of frontmatter', () => {
+		expect(isExcalidrawNote('Draw/Econ Layout.excalidraw.md', undefined)).toBe(true);
+		expect(isExcalidrawNote('Draw/Econ Layout.excalidraw.md', {})).toBe(true);
+	});
+
+	it('recognises a legacy raw .excalidraw file', () => {
+		expect(isExcalidrawNote('Draw/Old.excalidraw', undefined)).toBe(true);
+	});
+
+	it("recognises the plugin's own frontmatter flag on any truthy value, not just specific strings", () => {
+		expect(isExcalidrawNote('Notes/Whatever.md', { 'excalidraw-plugin': 'parsed' })).toBe(true);
+		expect(isExcalidrawNote('Notes/Whatever.md', { 'excalidraw-plugin': 'raw' })).toBe(true);
+		expect(isExcalidrawNote('Notes/Whatever.md', { 'excalidraw-plugin': true })).toBe(true);
 	});
 
 	it('is false for an ordinary note', () => {
-		expect(isExcalidrawNote({ tags: ['drawing'] })).toBe(false);
-		expect(isExcalidrawNote(undefined)).toBe(false);
+		expect(isExcalidrawNote('Notes/Whatever.md', { tags: ['drawing'] })).toBe(false);
+		expect(isExcalidrawNote('Notes/Whatever.md', undefined)).toBe(false);
 	});
 });
 

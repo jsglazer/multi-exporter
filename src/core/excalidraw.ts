@@ -12,9 +12,19 @@
  * the `obsidian://` URL (or wikilink) Excalidraw put on such a box.
  */
 
-/** Obsidian writes this into every note the Excalidraw plugin owns. */
-export function isExcalidrawNote(frontmatter: Record<string, unknown> | undefined): boolean {
-	return frontmatter?.['excalidraw-plugin'] === 'parsed' || frontmatter?.['excalidraw-plugin'] === 'raw';
+/**
+ * Whether a note belongs to the Excalidraw plugin, mirrored exactly from its own
+ * `isExcalidrawFile` (extracted from the shipped `main.js`, since this is not part of its
+ * published API): a legacy raw `.excalidraw` file, or any *truthy* `excalidraw-plugin`
+ * frontmatter value — not a specific string. The `.excalidraw.md` filename check is not just
+ * a faster path than the frontmatter one; a canvas whose frontmatter has an unusual shape
+ * (e.g. Excalidraw's own writer puts a blank line before the first key, and this plugin's
+ * `.excalidraw.md` boards all have one) still needs to be found some way, and the filename
+ * always tells the truth about a file this plugin created.
+ */
+export function isExcalidrawNote(path: string, frontmatter: Record<string, unknown> | undefined): boolean {
+	if (path.endsWith('.excalidraw.md') || path.endsWith('.excalidraw')) return true;
+	return Boolean(frontmatter?.['excalidraw-plugin']);
 }
 
 /**

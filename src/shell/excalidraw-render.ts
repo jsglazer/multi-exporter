@@ -107,7 +107,7 @@ async function renderEmbedBox(
 	nextAncestors.add(target.path);
 	const targetFrontmatter = app.metadataCache.getFileCache(target)?.frontmatter;
 
-	if (isExcalidrawNote(targetFrontmatter)) {
+	if (isExcalidrawNote(target.path, targetFrontmatter)) {
 		const wrapper = replaceForeignObjectContent(foreignObject, () => undefined);
 		await renderExcalidrawBoard(app, target, wrapper, component, nextAncestors);
 		return true;

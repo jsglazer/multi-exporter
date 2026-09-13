@@ -55807,8 +55807,9 @@ var PdfLibOutlineInjector = class {
 var import_obsidian3 = require("obsidian");
 
 // src/core/excalidraw.ts
-function isExcalidrawNote(frontmatter) {
-  return (frontmatter == null ? void 0 : frontmatter["excalidraw-plugin"]) === "parsed" || (frontmatter == null ? void 0 : frontmatter["excalidraw-plugin"]) === "raw";
+function isExcalidrawNote(path, frontmatter) {
+  if (path.endsWith(".excalidraw.md") || path.endsWith(".excalidraw")) return true;
+  return Boolean(frontmatter == null ? void 0 : frontmatter["excalidraw-plugin"]);
 }
 function resolveEmbedLinkTarget(link) {
   var _a, _b;
@@ -55911,7 +55912,7 @@ async function renderEmbedBox(app, file, linkTarget, foreignObject, component, a
   const nextAncestors = new Set(ancestors);
   nextAncestors.add(target.path);
   const targetFrontmatter = (_a = app.metadataCache.getFileCache(target)) == null ? void 0 : _a.frontmatter;
-  if (isExcalidrawNote(targetFrontmatter)) {
+  if (isExcalidrawNote(target.path, targetFrontmatter)) {
     const wrapper2 = replaceForeignObjectContent(foreignObject, () => void 0);
     await renderExcalidrawBoard(app, target, wrapper2, component, nextAncestors);
     return true;
@@ -55986,7 +55987,7 @@ var ObsidianDocumentRenderer = class {
     const component = new import_obsidian3.Component();
     component.load();
     const frontmatter = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
-    if (isExcalidrawNote(frontmatter)) {
+    if (isExcalidrawNote(file.path, frontmatter)) {
       await renderExcalidrawBoard(this.app, file, container, component, /* @__PURE__ */ new Set([sourcePath]));
     } else {
       const markdown = await this.app.vault.cachedRead(file);
@@ -56591,7 +56592,7 @@ var ExportModal = class extends import_obsidian6.Modal {
     this.repaginateQueued = false;
     const frontmatter = (_a = app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
     const cssClasses = normalizeCssClasses((_b = frontmatter == null ? void 0 : frontmatter["cssclasses"]) != null ? _b : frontmatter == null ? void 0 : frontmatter["cssclass"]);
-    this.profile = (_e = (_d = (_c = resolveProfileByCssClasses(settings.profiles, cssClasses)) != null ? _c : isExcalidrawNote(frontmatter) ? resolveProfileForExcalidraw(settings.profiles) : null) != null ? _d : resolveProfileForPath(settings.profiles, settings.folderProfiles, file.path, settings.defaultProfileId)) != null ? _e : settings.profiles[0];
+    this.profile = (_e = (_d = (_c = resolveProfileByCssClasses(settings.profiles, cssClasses)) != null ? _c : isExcalidrawNote(file.path, frontmatter) ? resolveProfileForExcalidraw(settings.profiles) : null) != null ? _d : resolveProfileForPath(settings.profiles, settings.folderProfiles, file.path, settings.defaultProfileId)) != null ? _e : settings.profiles[0];
     this.fileName = file.basename;
   }
   onOpen() {
