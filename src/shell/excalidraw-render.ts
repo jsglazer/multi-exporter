@@ -63,6 +63,11 @@ export async function renderExcalidrawBoard(
 		const foreignObject = anchor.querySelector<SVGForeignObjectElement>('foreignObject');
 		if (href === null || foreignObject === null) continue;
 
+		// `resolveEmbedLinkTarget` is the one place that decides which link shapes count as a
+		// vault-note embed (obsidian:// URL or a bare wikilink) — deliberately not filtered
+		// again here, so there is exactly one spot to update if Excalidraw ever renders a
+		// third shape, instead of two that can silently drift apart the way they already have
+		// once (see its own doc comment and tests in core/excalidraw.ts).
 		const linkTarget = resolveEmbedLinkTarget(href);
 		if (linkTarget === null) continue; // Not a vault-note embed — leave Excalidraw's own rendering as-is.
 
@@ -171,16 +176,9 @@ function growToFitOverflow(svg: SVGSVGElement, swapped: readonly SwappedBox[]): 
 	}
 }
 
-/**
- * An SVG `<a>`'s link, whichever attribute form rendered it (plain `href` or `xlink:href`),
- * and whichever shape Excalidraw wrote it in — an `obsidian://` URL is asked for explicitly
- * above, but a wikilink is accepted too so a future default change on Excalidraw's side
- * degrades to "still works" rather than "silently stops swapping anything".
- */
+/** An SVG `<a>`'s link, whichever attribute form rendered it (plain `href` or `xlink:href`). */
 function anchorHref(anchor: SVGAElement): string | null {
-	const href = anchor.getAttribute('href') ?? anchor.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
-	if (href === null) return null;
-	return href.startsWith('obsidian://') || href.startsWith('[[') ? href : null;
+	return anchor.getAttribute('href') ?? anchor.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
 }
 
 function placeholder(container: HTMLElement, text: string): void {

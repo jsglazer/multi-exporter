@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { isExcalidrawNote, resolveEmbedLinkTarget } from '../src/core/excalidraw';
 
@@ -43,5 +45,27 @@ describe('resolveEmbedLinkTarget', () => {
 		expect(resolveEmbedLinkTarget(null)).toBeNull();
 		expect(resolveEmbedLinkTarget(undefined)).toBeNull();
 		expect(resolveEmbedLinkTarget('')).toBeNull();
+	});
+});
+
+/**
+ * `shell/excalidraw-render.ts` imports `obsidian` and so cannot be unit-tested directly (the
+ * project's usual core/shell boundary) — but the one call in it that is easy to quietly break
+ * by "simplifying" a long argument list deserves a guard anyway, since it already broke once.
+ * `createSVG`'s 7th positional argument (`convertMarkdownLinksToObsidianURLs`) must stay `true`:
+ * false — the plugin's own default — renders a note-embed box's link as the literal wikilink
+ * text instead of an obsidian:// URL, which silently stops every swap in this file from firing
+ * at all, with no error anywhere. Asserted by reading the source as text rather than executing
+ * it, the same reason `guest-scripts.test.ts` parses instead of running.
+ */
+describe('excalidraw-render source guard', () => {
+	const source = readFileSync(join(__dirname, '..', 'src', 'shell', 'excalidraw-render.ts'), 'utf8');
+
+	it('requests the obsidian:// link form from createSVG, not the wikilink-text default', () => {
+		const call = /automate\.createSVG\(([^)]*)\)/.exec(source);
+		expect(call).not.toBeNull();
+		const args = (call?.[1] ?? '').split(',').map((arg) => arg.trim());
+		// file.path, embedFont, exportSettings, loader, theme, padding, convertMarkdownLinksToObsidianURLs
+		expect(args[6]).toBe('true');
 	});
 });

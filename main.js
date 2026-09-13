@@ -55957,9 +55957,7 @@ function growToFitOverflow(svg, swapped) {
 }
 function anchorHref(anchor) {
   var _a;
-  const href = (_a = anchor.getAttribute("href")) != null ? _a : anchor.getAttributeNS("http://www.w3.org/1999/xlink", "href");
-  if (href === null) return null;
-  return href.startsWith("obsidian://") || href.startsWith("[[") ? href : null;
+  return (_a = anchor.getAttribute("href")) != null ? _a : anchor.getAttributeNS("http://www.w3.org/1999/xlink", "href");
 }
 function placeholder(container, text) {
   const el = activeDocument.createElement("p");
