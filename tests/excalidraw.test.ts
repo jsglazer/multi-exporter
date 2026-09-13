@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { isExcalidrawNote, resolveEmbedLinkTarget } from '../src/core/excalidraw';
+import { isExcalidrawNote, resolveEmbedLinkTarget, resolveExportTarget } from '../src/core/excalidraw';
 
 describe('isExcalidrawNote', () => {
 	it('recognises the .excalidraw.md filename convention regardless of frontmatter', () => {
@@ -22,6 +22,23 @@ describe('isExcalidrawNote', () => {
 	it('is false for an ordinary note', () => {
 		expect(isExcalidrawNote('Notes/Whatever.md', { tags: ['drawing'] })).toBe(false);
 		expect(isExcalidrawNote('Notes/Whatever.md', undefined)).toBe(false);
+	});
+});
+
+describe('resolveExportTarget', () => {
+	it('exports the board, not an embedded note Excalidraw made the active file', () => {
+		expect(resolveExportTarget('Draw/Elasticity.md', ['Econ Layout.excalidraw.md'])).toBe('Econ Layout.excalidraw.md');
+	});
+
+	it('prefers the outermost board when boards are nested (innermost first)', () => {
+		expect(resolveExportTarget('Draw/Elasticity.md', ['Inner.excalidraw.md', 'Outer.excalidraw.md'])).toBe(
+			'Outer.excalidraw.md',
+		);
+	});
+
+	it('keeps the active file when no board encloses it', () => {
+		expect(resolveExportTarget('Draw/Elasticity.md', [])).toBe('Draw/Elasticity.md');
+		expect(resolveExportTarget(null, [])).toBeNull();
 	});
 });
 
@@ -67,5 +84,22 @@ describe('excalidraw-render source guard', () => {
 		const args = (call?.[1] ?? '').split(',').map((arg) => arg.trim());
 		// file.path, embedFont, exportSettings, loader, theme, padding, convertMarkdownLinksToObsidianURLs
 		expect(args[6]).toBe('true');
+	});
+});
+
+/**
+ * Same reasoning, for `main.ts`: both "active note" commands must resolve their target through
+ * `activeExportTarget()`, never `getActiveFile()` directly — a direct call silently exports an
+ * embedded note instead of the Excalidraw board around it (Elasticity 5.pdf, 2026-09-13).
+ */
+describe('main.ts export-target guard', () => {
+	const source = readFileSync(join(__dirname, '..', 'src', 'main.ts'), 'utf8')
+		.replace(/\/\*[\s\S]*?\*\//g, '')
+		.replace(/\/\/.*$/gm, '');
+
+	it('calls getActiveFile() only inside activeExportTarget()', () => {
+		expect(source.match(/getActiveFile\(\)/g) ?? []).toHaveLength(1);
+		expect(source).toMatch(/activeExportTarget\(\): TFile \| null \{[^}]*getActiveFile\(\)/);
+		expect(source.match(/this\.activeExportTarget\(\)/g) ?? []).toHaveLength(2);
 	});
 });

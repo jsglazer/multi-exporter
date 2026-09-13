@@ -1,5 +1,7 @@
-import { Menu, Notice, Plugin, TFile, TFolder } from 'obsidian';
+import { Menu, Notice, Plugin, TFile, TFolder, View } from 'obsidian';
 import type { TAbstractFile } from 'obsidian';
+import { findEnclosingExcalidrawBoards } from './adapter/obsidian-internals';
+import { resolveExportTarget } from './core/excalidraw';
 import { setFolderProfile } from './core/profile-resolver';
 import { normalizeSettings } from './core/profiles';
 import { remapFolderPaths, removeFolderPaths } from './core/rename-map';
@@ -34,7 +36,7 @@ export default class MultiExporterPlugin extends Plugin {
 			id: 'export-active-note',
 			name: 'Export active note to PDF',
 			checkCallback: (checking) => {
-				const file = this.app.workspace.getActiveFile();
+				const file = this.activeExportTarget();
 				if (file === null || file.extension !== 'md') return false;
 				if (!checking) this.openExportModal(file);
 				return true;
@@ -45,7 +47,7 @@ export default class MultiExporterPlugin extends Plugin {
 			id: 'export-vault-folder',
 			name: 'Export the active note’s folder to PDF',
 			checkCallback: (checking) => {
-				const folder = this.app.workspace.getActiveFile()?.parent ?? null;
+				const folder = this.activeExportTarget()?.parent ?? null;
 				if (folder === null) return false;
 				if (!checking) this.openFolderExportModal(folder);
 				return true;
@@ -135,6 +137,16 @@ export default class MultiExporterPlugin extends Plugin {
 				);
 			}
 		});
+	}
+
+	/**
+	 * The note the user is looking at — which is not always `getActiveFile()`: clicking into a
+	 * note embedded on an Excalidraw board makes that embed the active file, so the enclosing
+	 * board is preferred (see `resolveExportTarget`).
+	 */
+	private activeExportTarget(): TFile | null {
+		const activeView = this.app.workspace.getActiveViewOfType(View);
+		return resolveExportTarget(this.app.workspace.getActiveFile(), findEnclosingExcalidrawBoards(this.app, activeView));
 	}
 
 	private openExportModal(file: TFile): void {

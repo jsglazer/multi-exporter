@@ -1,4 +1,4 @@
-import type { App, Plugin } from 'obsidian';
+import type { App, Plugin, TFile, View } from 'obsidian';
 import type { AnnotationCategoryColor, AnnotationCategoryColors, AnnotationStripClasses } from '../core/annotations';
 
 /**
@@ -18,7 +18,7 @@ import type { AnnotationCategoryColor, AnnotationCategoryColors, AnnotationStrip
  * | Chromium | 142.0.7444.265 | embedded version string |
  * | `zotero-manager` | API `version: 1` (plugin v1.1.9) | `src/api.ts`, read 2026-08-17 |
  * | `md-annotation` | v1.0.22, public `api` | `src/api.ts`, read 2026-08-29 |
- * | `obsidian-excalidraw-plugin` | v2.27.3, public `window.ExcalidrawAutomate.createSVG` | `main.js`, read 2026-09-12 |
+ * | `obsidian-excalidraw-plugin` | v2.27.3, public `window.ExcalidrawAutomate.createSVG`; view type `excalidraw` and embedded-note leaves mounted inside the board view's DOM | `main.js`, read 2026-09-12 / 2026-09-13 |
  *
  * The audit named no Obsidian internal beyond these; in particular it specified no file
  * explorer access, so none is taken.
@@ -115,6 +115,36 @@ function asExcalidrawAutomateApi(candidate: unknown): ExcalidrawAutomateApi | nu
 export function getExcalidrawAutomate(app: App): ExcalidrawAutomateApi | null {
 	if (!isPluginEnabled(app, EXCALIDRAW_PLUGIN_ID)) return null;
 	return asExcalidrawAutomateApi((window as unknown as { ExcalidrawAutomate?: unknown }).ExcalidrawAutomate);
+}
+
+/** Excalidraw's own view type, as its `ExcalidrawView.getViewType()` returns it. */
+export const EXCALIDRAW_VIEW_TYPE = 'excalidraw';
+
+/**
+ * Every Excalidraw board whose view DOM contains the active view, innermost first.
+ *
+ * Excalidraw hosts a note embedded on a board in a leaf it builds with
+ * `workspace.createLeafInParent` on a detached split, mounted *inside* the board view's own
+ * container, and makes that leaf active when the user clicks into it — so the embedded note
+ * becomes the workspace's active file. DOM containment is the one relation between the two
+ * leaves that is not a private field (`embeddableLeafRefs` is), so that is what this checks.
+ * Only boards in the workspace tree are found; a board embedded inside another board is itself
+ * in a detached leaf, which is fine, since the caller wants the outermost board anyway.
+ *
+ * The active view is passed in rather than looked up here because the lookup needs `View` as a
+ * runtime value, and this file stays type-only against `obsidian` so tests can import it.
+ */
+export function findEnclosingExcalidrawBoards(app: App, active: View | null): TFile[] {
+	if (active === null) return [];
+	const boards: { containerEl: HTMLElement; file: TFile }[] = [];
+	for (const leaf of app.workspace.getLeavesOfType(EXCALIDRAW_VIEW_TYPE)) {
+		const view = leaf.view as View & { file?: TFile | null };
+		if (view === active || view.file === null || view.file === undefined) continue;
+		if (view.containerEl.contains(active.containerEl)) boards.push({ containerEl: view.containerEl, file: view.file });
+	}
+	const depth = (board: { containerEl: HTMLElement }): number =>
+		boards.filter((other) => other.containerEl.contains(board.containerEl)).length;
+	return boards.sort((a, b) => depth(b) - depth(a)).map((board) => board.file);
 }
 
 /* ------------------------------------------------------------------- md-annotation -- */

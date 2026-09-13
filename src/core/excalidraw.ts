@@ -28,6 +28,20 @@ export function isExcalidrawNote(path: string, frontmatter: Record<string, unkno
 }
 
 /**
+ * Which note an "export the active note" command means.
+ *
+ * Clicking into a note embedded on an Excalidraw board opens a real editor for that note inside
+ * the board, and Excalidraw calls `workspace.setActiveLeaf` on it — so `getActiveFile()` then
+ * names the embedded note (e.g. `Elasticity.md`), not the board the user is looking at. Exporting
+ * that exports one box of the canvas as a lone note. `enclosingBoards` is every Excalidraw board
+ * whose view contains the active view, innermost first; the outermost one is the canvas actually
+ * open in the tab, and wins. No enclosing board means the active file is what it says it is.
+ */
+export function resolveExportTarget<T>(activeFile: T | null, enclosingBoards: readonly T[]): T | null {
+	return enclosingBoards[enclosingBoards.length - 1] ?? activeFile;
+}
+
+/**
  * A note-embed box's link target, e.g. `[[CurveShifts]]` -> `CurveShifts`, or the
  * `obsidian://open?...&file=...` URL Excalidraw renders such a box's link as -> the decoded
  * vault path.

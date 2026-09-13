@@ -4265,6 +4265,275 @@ __export(main_exports, {
 module.exports = __toCommonJS(main_exports);
 var import_obsidian10 = require("obsidian");
 
+// src/adapter/obsidian-internals.ts
+function pluginRegistry(app) {
+  const registry = app.plugins;
+  if (registry === null || typeof registry !== "object") return null;
+  const candidate = registry;
+  if (typeof candidate.plugins !== "object" || candidate.plugins === null) return null;
+  return candidate;
+}
+function isPluginEnabled(app, pluginId) {
+  const registry = pluginRegistry(app);
+  if (registry === null) return false;
+  if (registry.enabledPlugins instanceof Set && !registry.enabledPlugins.has(pluginId)) return false;
+  return registry.plugins[pluginId] !== void 0;
+}
+function getPluginApi(app, pluginId) {
+  var _a, _b;
+  const registry = pluginRegistry(app);
+  if (registry === null) return null;
+  if (registry.enabledPlugins instanceof Set && !registry.enabledPlugins.has(pluginId)) return null;
+  return (_b = (_a = registry.plugins[pluginId]) == null ? void 0 : _a.api) != null ? _b : null;
+}
+function getPluginStringSetting(app, pluginId, key) {
+  var _a;
+  const registry = pluginRegistry(app);
+  const settings = (_a = registry == null ? void 0 : registry.plugins[pluginId]) == null ? void 0 : _a.settings;
+  if (settings === void 0) return null;
+  const value = settings[key];
+  return typeof value === "string" ? value : null;
+}
+var EXCALIDRAW_PLUGIN_ID = "obsidian-excalidraw-plugin";
+function asExcalidrawAutomateApi(candidate) {
+  if (candidate === null || typeof candidate !== "object") return null;
+  const api = candidate;
+  return typeof api.createSVG === "function" ? api : null;
+}
+function getExcalidrawAutomate(app) {
+  if (!isPluginEnabled(app, EXCALIDRAW_PLUGIN_ID)) return null;
+  return asExcalidrawAutomateApi(window.ExcalidrawAutomate);
+}
+var EXCALIDRAW_VIEW_TYPE = "excalidraw";
+function findEnclosingExcalidrawBoards(app, active) {
+  if (active === null) return [];
+  const boards = [];
+  for (const leaf of app.workspace.getLeavesOfType(EXCALIDRAW_VIEW_TYPE)) {
+    const view = leaf.view;
+    if (view === active || view.file === null || view.file === void 0) continue;
+    if (view.containerEl.contains(active.containerEl)) boards.push({ containerEl: view.containerEl, file: view.file });
+  }
+  const depth = (board) => boards.filter((other) => other.containerEl.contains(board.containerEl)).length;
+  return boards.sort((a, b) => depth(b) - depth(a)).map((board) => board.file);
+}
+var MD_ANNOTATION_STRIP_CLASSES = {
+  unwrap: ["mdann-hl", "mdann-anchor"],
+  remove: ["mdann-marker", "mdann-gutter-host", "mdann-gutter-card", "mdann-gutter-leader", "mdann-gutter-tick"],
+  unclass: ["mdann-widget-hl"]
+};
+function getMdAnnotationCategoryColors(app, pluginId) {
+  var _a, _b;
+  const settings = (_b = (_a = pluginRegistry(app)) == null ? void 0 : _a.plugins[pluginId]) == null ? void 0 : _b.settings;
+  const styles = settings == null ? void 0 : settings["categoryStyles"];
+  if (styles === null || typeof styles !== "object") return {};
+  const out = {};
+  for (const [name, value] of Object.entries(styles)) {
+    if (value === null || typeof value !== "object") continue;
+    const style = value;
+    if (style.use === false) continue;
+    const light = style.light;
+    if (light === null || typeof light !== "object") continue;
+    const parts = light;
+    const color = {};
+    const foreground = enabledColor(parts.fr);
+    const background = enabledColor(parts.bg);
+    if (foreground !== null) color.foreground = foreground;
+    if (background !== null) color.background = background;
+    if (color.foreground !== void 0 || color.background !== void 0) out[name] = color;
+  }
+  return out;
+}
+function enabledColor(option) {
+  if (option === null || typeof option !== "object") return null;
+  const candidate = option;
+  if (candidate.enabled !== true) return null;
+  return typeof candidate.color === "string" && candidate.color !== "" ? candidate.color : null;
+}
+var DialogUnavailableError = class extends Error {
+  constructor() {
+    super("Electron's file dialog could not be reached, so there was nowhere to write the export.");
+    this.name = "DialogUnavailableError";
+  }
+};
+function dialogBridge() {
+  var _a, _b;
+  for (const moduleId of ["electron", "@electron/remote"]) {
+    try {
+      const module2 = require(moduleId);
+      const dialog = (_b = (_a = module2.remote) == null ? void 0 : _a.dialog) != null ? _b : module2.dialog;
+      if (dialog !== void 0) return dialog;
+    } catch (e) {
+    }
+  }
+  throw new DialogUnavailableError();
+}
+async function showPdfSaveDialog(title, defaultPath) {
+  const dialog = dialogBridge();
+  const result = await dialog.showSaveDialog({
+    title,
+    defaultPath,
+    filters: [{ name: "PDF", extensions: ["pdf"] }]
+  });
+  return result.canceled || result.filePath === void 0 ? null : result.filePath;
+}
+async function showDirectoryDialog(title, defaultPath) {
+  var _a;
+  const dialog = dialogBridge();
+  const result = await dialog.showOpenDialog({
+    title,
+    ...defaultPath === "" ? {} : { defaultPath },
+    properties: ["openDirectory", "createDirectory"]
+  });
+  return result.canceled ? null : (_a = result.filePaths[0]) != null ? _a : null;
+}
+var ShellUnavailableError = class extends Error {
+  constructor() {
+    super("Electron's shell module could not be reached, so the exported file could not be opened.");
+    this.name = "ShellUnavailableError";
+  }
+};
+function shellBridge() {
+  var _a, _b;
+  for (const moduleId of ["electron", "@electron/remote"]) {
+    try {
+      const module2 = require(moduleId);
+      const shell = (_b = (_a = module2.remote) == null ? void 0 : _a.shell) != null ? _b : module2.shell;
+      if (shell !== void 0) return shell;
+    } catch (e) {
+    }
+  }
+  throw new ShellUnavailableError();
+}
+async function openExportedFile(path) {
+  const error2 = await shellBridge().openPath(path);
+  if (error2 !== "") throw new Error(error2);
+}
+async function retryWhileUnready(attempt, destroyed) {
+  const deadline = Date.now() + READY_TIMEOUT_MS;
+  for (; ; ) {
+    try {
+      return await attempt();
+    } catch (error2) {
+      if (destroyed() || !isUnreadyError(error2) || Date.now() >= deadline) throw error2;
+      await new Promise((resolve) => window.setTimeout(resolve, RETRY_INTERVAL_MS));
+    }
+  }
+}
+async function unwrapped(attempt) {
+  try {
+    return await attempt();
+  } catch (error2) {
+    if (!(error2 instanceof Error)) throw error2;
+    const message = unwrapGuestError(error2.message);
+    if (message === error2.message) throw error2;
+    const rethrown = new Error(message);
+    if (error2.stack !== void 0) rethrown.stack = error2.stack;
+    throw rethrown;
+  }
+}
+function isUnreadyError(error2) {
+  return error2 instanceof Error && /must be attached to the DOM|dom-ready/i.test(error2.message);
+}
+var GUEST_CALL_WRAPPER = /^Error invoking remote method '[^']*':\s*(?:\w*Error:\s*)?/;
+function unwrapGuestError(message) {
+  return message.replace(GUEST_CALL_WRAPPER, "");
+}
+var GUEST_GONE = /render frame was disposed|WebContents was destroyed|Object has been destroyed|closed or released|missing guest page|Invalid guestInstanceId|guest instance is not attached/i;
+function isGuestGoneError(error2) {
+  if (!(error2 instanceof Error)) return false;
+  return GUEST_GONE.test(error2.message);
+}
+var RETRY_INTERVAL_MS = 150;
+var READY_TIMEOUT_MS = 15e3;
+var PREVIEW_CONTAINER_CLASS = "mx-preview-container";
+var PREVIEW_OFFSCREEN_CLASS = "mx-preview-offscreen";
+function createPreviewWebview(parent, partition) {
+  const document2 = parent.ownerDocument;
+  const element = document2.createElement("webview");
+  element.setAttribute("class", PREVIEW_CONTAINER_CLASS);
+  element.setAttribute("partition", partition);
+  element.setAttribute("nodeintegration", "off");
+  element.setAttribute("webpreferences", "contextIsolation=no,sandbox=no,javascript=yes");
+  element.setAttribute("disableblinkfeatures", "Auxclick");
+  element.setAttribute("src", "about:blank");
+  parent.appendChild(element);
+  let destroyed = false;
+  const readyPromise = new Promise((resolve) => {
+    var _a;
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      element.removeEventListener("dom-ready", onReady);
+      window.clearTimeout(timer);
+      resolve();
+    };
+    const onReady = () => settle();
+    element.addEventListener("dom-ready", onReady);
+    const timer = window.setTimeout(() => {
+      console.warn("[multi-exporter] webview dom-ready did not fire within %dms; continuing.", READY_TIMEOUT_MS);
+      settle();
+    }, READY_TIMEOUT_MS);
+    try {
+      if (((_a = element.isLoading) == null ? void 0 : _a.call(element)) === false) settle();
+    } catch (e) {
+    }
+  });
+  const ready = () => readyPromise;
+  return {
+    element,
+    ready,
+    async run(code) {
+      if (destroyed) throw new Error("The preview webview has been destroyed.");
+      await ready();
+      return await unwrapped(
+        () => retryWhileUnready(() => element.executeJavaScript(code), () => destroyed)
+      );
+    },
+    async printToPdf(options) {
+      if (destroyed) throw new Error("The preview webview has been destroyed.");
+      await ready();
+      return await unwrapped(() => retryWhileUnready(() => element.printToPDF(options), () => destroyed));
+    },
+    print(options) {
+      if (destroyed) throw new Error("The preview webview has been destroyed.");
+      element.print(options);
+    },
+    setOffscreen(offscreen) {
+      element.toggleClass(PREVIEW_OFFSCREEN_CLASS, offscreen);
+    },
+    destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      element.detach();
+    }
+  };
+}
+
+// src/core/excalidraw.ts
+function isExcalidrawNote(path, frontmatter) {
+  if (path.endsWith(".excalidraw.md") || path.endsWith(".excalidraw")) return true;
+  return Boolean(frontmatter == null ? void 0 : frontmatter["excalidraw-plugin"]);
+}
+function resolveExportTarget(activeFile, enclosingBoards) {
+  var _a;
+  return (_a = enclosingBoards[enclosingBoards.length - 1]) != null ? _a : activeFile;
+}
+function resolveEmbedLinkTarget(link) {
+  var _a, _b;
+  if (link === null || link === void 0 || link === "") return null;
+  const wikilink = /^\[\[([^\]|#]+)/.exec(link);
+  if (wikilink !== null) return (_b = (_a = wikilink[1]) == null ? void 0 : _a.trim()) != null ? _b : null;
+  try {
+    const url = new URL(link);
+    if (url.protocol !== "obsidian:") return null;
+    const file = url.searchParams.get("file");
+    return file === null ? null : decodeURIComponent(file).replace(/\.md$/, "");
+  } catch (e) {
+    return null;
+  }
+}
+
 // src/core/paths.ts
 function normalizePath(input) {
   const segments = input.replace(/\\/g, "/").split("/").filter((segment) => segment.length > 0 && segment !== ".");
@@ -4971,239 +5240,6 @@ function removeFolderPaths(map, deletedPath) {
 
 // src/shell/export-service.ts
 var import_obsidian5 = require("obsidian");
-
-// src/adapter/obsidian-internals.ts
-function pluginRegistry(app) {
-  const registry = app.plugins;
-  if (registry === null || typeof registry !== "object") return null;
-  const candidate = registry;
-  if (typeof candidate.plugins !== "object" || candidate.plugins === null) return null;
-  return candidate;
-}
-function isPluginEnabled(app, pluginId) {
-  const registry = pluginRegistry(app);
-  if (registry === null) return false;
-  if (registry.enabledPlugins instanceof Set && !registry.enabledPlugins.has(pluginId)) return false;
-  return registry.plugins[pluginId] !== void 0;
-}
-function getPluginApi(app, pluginId) {
-  var _a, _b;
-  const registry = pluginRegistry(app);
-  if (registry === null) return null;
-  if (registry.enabledPlugins instanceof Set && !registry.enabledPlugins.has(pluginId)) return null;
-  return (_b = (_a = registry.plugins[pluginId]) == null ? void 0 : _a.api) != null ? _b : null;
-}
-function getPluginStringSetting(app, pluginId, key) {
-  var _a;
-  const registry = pluginRegistry(app);
-  const settings = (_a = registry == null ? void 0 : registry.plugins[pluginId]) == null ? void 0 : _a.settings;
-  if (settings === void 0) return null;
-  const value = settings[key];
-  return typeof value === "string" ? value : null;
-}
-var EXCALIDRAW_PLUGIN_ID = "obsidian-excalidraw-plugin";
-function asExcalidrawAutomateApi(candidate) {
-  if (candidate === null || typeof candidate !== "object") return null;
-  const api = candidate;
-  return typeof api.createSVG === "function" ? api : null;
-}
-function getExcalidrawAutomate(app) {
-  if (!isPluginEnabled(app, EXCALIDRAW_PLUGIN_ID)) return null;
-  return asExcalidrawAutomateApi(window.ExcalidrawAutomate);
-}
-var MD_ANNOTATION_STRIP_CLASSES = {
-  unwrap: ["mdann-hl", "mdann-anchor"],
-  remove: ["mdann-marker", "mdann-gutter-host", "mdann-gutter-card", "mdann-gutter-leader", "mdann-gutter-tick"],
-  unclass: ["mdann-widget-hl"]
-};
-function getMdAnnotationCategoryColors(app, pluginId) {
-  var _a, _b;
-  const settings = (_b = (_a = pluginRegistry(app)) == null ? void 0 : _a.plugins[pluginId]) == null ? void 0 : _b.settings;
-  const styles = settings == null ? void 0 : settings["categoryStyles"];
-  if (styles === null || typeof styles !== "object") return {};
-  const out = {};
-  for (const [name, value] of Object.entries(styles)) {
-    if (value === null || typeof value !== "object") continue;
-    const style = value;
-    if (style.use === false) continue;
-    const light = style.light;
-    if (light === null || typeof light !== "object") continue;
-    const parts = light;
-    const color = {};
-    const foreground = enabledColor(parts.fr);
-    const background = enabledColor(parts.bg);
-    if (foreground !== null) color.foreground = foreground;
-    if (background !== null) color.background = background;
-    if (color.foreground !== void 0 || color.background !== void 0) out[name] = color;
-  }
-  return out;
-}
-function enabledColor(option) {
-  if (option === null || typeof option !== "object") return null;
-  const candidate = option;
-  if (candidate.enabled !== true) return null;
-  return typeof candidate.color === "string" && candidate.color !== "" ? candidate.color : null;
-}
-var DialogUnavailableError = class extends Error {
-  constructor() {
-    super("Electron's file dialog could not be reached, so there was nowhere to write the export.");
-    this.name = "DialogUnavailableError";
-  }
-};
-function dialogBridge() {
-  var _a, _b;
-  for (const moduleId of ["electron", "@electron/remote"]) {
-    try {
-      const module2 = require(moduleId);
-      const dialog = (_b = (_a = module2.remote) == null ? void 0 : _a.dialog) != null ? _b : module2.dialog;
-      if (dialog !== void 0) return dialog;
-    } catch (e) {
-    }
-  }
-  throw new DialogUnavailableError();
-}
-async function showPdfSaveDialog(title, defaultPath) {
-  const dialog = dialogBridge();
-  const result = await dialog.showSaveDialog({
-    title,
-    defaultPath,
-    filters: [{ name: "PDF", extensions: ["pdf"] }]
-  });
-  return result.canceled || result.filePath === void 0 ? null : result.filePath;
-}
-async function showDirectoryDialog(title, defaultPath) {
-  var _a;
-  const dialog = dialogBridge();
-  const result = await dialog.showOpenDialog({
-    title,
-    ...defaultPath === "" ? {} : { defaultPath },
-    properties: ["openDirectory", "createDirectory"]
-  });
-  return result.canceled ? null : (_a = result.filePaths[0]) != null ? _a : null;
-}
-var ShellUnavailableError = class extends Error {
-  constructor() {
-    super("Electron's shell module could not be reached, so the exported file could not be opened.");
-    this.name = "ShellUnavailableError";
-  }
-};
-function shellBridge() {
-  var _a, _b;
-  for (const moduleId of ["electron", "@electron/remote"]) {
-    try {
-      const module2 = require(moduleId);
-      const shell = (_b = (_a = module2.remote) == null ? void 0 : _a.shell) != null ? _b : module2.shell;
-      if (shell !== void 0) return shell;
-    } catch (e) {
-    }
-  }
-  throw new ShellUnavailableError();
-}
-async function openExportedFile(path) {
-  const error2 = await shellBridge().openPath(path);
-  if (error2 !== "") throw new Error(error2);
-}
-async function retryWhileUnready(attempt, destroyed) {
-  const deadline = Date.now() + READY_TIMEOUT_MS;
-  for (; ; ) {
-    try {
-      return await attempt();
-    } catch (error2) {
-      if (destroyed() || !isUnreadyError(error2) || Date.now() >= deadline) throw error2;
-      await new Promise((resolve) => window.setTimeout(resolve, RETRY_INTERVAL_MS));
-    }
-  }
-}
-async function unwrapped(attempt) {
-  try {
-    return await attempt();
-  } catch (error2) {
-    if (!(error2 instanceof Error)) throw error2;
-    const message = unwrapGuestError(error2.message);
-    if (message === error2.message) throw error2;
-    const rethrown = new Error(message);
-    if (error2.stack !== void 0) rethrown.stack = error2.stack;
-    throw rethrown;
-  }
-}
-function isUnreadyError(error2) {
-  return error2 instanceof Error && /must be attached to the DOM|dom-ready/i.test(error2.message);
-}
-var GUEST_CALL_WRAPPER = /^Error invoking remote method '[^']*':\s*(?:\w*Error:\s*)?/;
-function unwrapGuestError(message) {
-  return message.replace(GUEST_CALL_WRAPPER, "");
-}
-var GUEST_GONE = /render frame was disposed|WebContents was destroyed|Object has been destroyed|closed or released|missing guest page|Invalid guestInstanceId|guest instance is not attached/i;
-function isGuestGoneError(error2) {
-  if (!(error2 instanceof Error)) return false;
-  return GUEST_GONE.test(error2.message);
-}
-var RETRY_INTERVAL_MS = 150;
-var READY_TIMEOUT_MS = 15e3;
-var PREVIEW_CONTAINER_CLASS = "mx-preview-container";
-var PREVIEW_OFFSCREEN_CLASS = "mx-preview-offscreen";
-function createPreviewWebview(parent, partition) {
-  const document2 = parent.ownerDocument;
-  const element = document2.createElement("webview");
-  element.setAttribute("class", PREVIEW_CONTAINER_CLASS);
-  element.setAttribute("partition", partition);
-  element.setAttribute("nodeintegration", "off");
-  element.setAttribute("webpreferences", "contextIsolation=no,sandbox=no,javascript=yes");
-  element.setAttribute("disableblinkfeatures", "Auxclick");
-  element.setAttribute("src", "about:blank");
-  parent.appendChild(element);
-  let destroyed = false;
-  const readyPromise = new Promise((resolve) => {
-    var _a;
-    let settled = false;
-    const settle = () => {
-      if (settled) return;
-      settled = true;
-      element.removeEventListener("dom-ready", onReady);
-      window.clearTimeout(timer);
-      resolve();
-    };
-    const onReady = () => settle();
-    element.addEventListener("dom-ready", onReady);
-    const timer = window.setTimeout(() => {
-      console.warn("[multi-exporter] webview dom-ready did not fire within %dms; continuing.", READY_TIMEOUT_MS);
-      settle();
-    }, READY_TIMEOUT_MS);
-    try {
-      if (((_a = element.isLoading) == null ? void 0 : _a.call(element)) === false) settle();
-    } catch (e) {
-    }
-  });
-  const ready = () => readyPromise;
-  return {
-    element,
-    ready,
-    async run(code) {
-      if (destroyed) throw new Error("The preview webview has been destroyed.");
-      await ready();
-      return await unwrapped(
-        () => retryWhileUnready(() => element.executeJavaScript(code), () => destroyed)
-      );
-    },
-    async printToPdf(options) {
-      if (destroyed) throw new Error("The preview webview has been destroyed.");
-      await ready();
-      return await unwrapped(() => retryWhileUnready(() => element.printToPDF(options), () => destroyed));
-    },
-    print(options) {
-      if (destroyed) throw new Error("The preview webview has been destroyed.");
-      element.print(options);
-    },
-    setOffscreen(offscreen) {
-      element.toggleClass(PREVIEW_OFFSCREEN_CLASS, offscreen);
-    },
-    destroy() {
-      if (destroyed) return;
-      destroyed = true;
-      element.detach();
-    }
-  };
-}
 
 // src/core/dom.ts
 var NODE_TYPE_ELEMENT = 1;
@@ -55806,26 +55842,6 @@ var PdfLibOutlineInjector = class {
 // src/shell/render.ts
 var import_obsidian3 = require("obsidian");
 
-// src/core/excalidraw.ts
-function isExcalidrawNote(path, frontmatter) {
-  if (path.endsWith(".excalidraw.md") || path.endsWith(".excalidraw")) return true;
-  return Boolean(frontmatter == null ? void 0 : frontmatter["excalidraw-plugin"]);
-}
-function resolveEmbedLinkTarget(link) {
-  var _a, _b;
-  if (link === null || link === void 0 || link === "") return null;
-  const wikilink = /^\[\[([^\]|#]+)/.exec(link);
-  if (wikilink !== null) return (_b = (_a = wikilink[1]) == null ? void 0 : _a.trim()) != null ? _b : null;
-  try {
-    const url = new URL(link);
-    if (url.protocol !== "obsidian:") return null;
-    const file = url.searchParams.get("file");
-    return file === null ? null : decodeURIComponent(file).replace(/\.md$/, "");
-  } catch (e) {
-    return null;
-  }
-}
-
 // src/shell/dom-stability.ts
 var STABILITY_POLL_MS = 60;
 var STABILITY_SAMPLES = 3;
@@ -57531,7 +57547,7 @@ var MultiExporterPlugin = class extends import_obsidian10.Plugin {
       id: "export-active-note",
       name: "Export active note to PDF",
       checkCallback: (checking) => {
-        const file = this.app.workspace.getActiveFile();
+        const file = this.activeExportTarget();
         if (file === null || file.extension !== "md") return false;
         if (!checking) this.openExportModal(file);
         return true;
@@ -57542,7 +57558,7 @@ var MultiExporterPlugin = class extends import_obsidian10.Plugin {
       name: "Export the active note\u2019s folder to PDF",
       checkCallback: (checking) => {
         var _a, _b;
-        const folder = (_b = (_a = this.app.workspace.getActiveFile()) == null ? void 0 : _a.parent) != null ? _b : null;
+        const folder = (_b = (_a = this.activeExportTarget()) == null ? void 0 : _a.parent) != null ? _b : null;
         if (folder === null) return false;
         if (!checking) this.openFolderExportModal(folder);
         return true;
@@ -57613,6 +57629,15 @@ var MultiExporterPlugin = class extends import_obsidian10.Plugin {
         );
       }
     });
+  }
+  /**
+   * The note the user is looking at — which is not always `getActiveFile()`: clicking into a
+   * note embedded on an Excalidraw board makes that embed the active file, so the enclosing
+   * board is preferred (see `resolveExportTarget`).
+   */
+  activeExportTarget() {
+    const activeView = this.app.workspace.getActiveViewOfType(import_obsidian10.View);
+    return resolveExportTarget(this.app.workspace.getActiveFile(), findEnclosingExcalidrawBoards(this.app, activeView));
   }
   openExportModal(file) {
     if (this.service === null) return;
