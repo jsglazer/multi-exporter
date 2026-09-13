@@ -18,7 +18,7 @@ import type { AnnotationCategoryColor, AnnotationCategoryColors, AnnotationStrip
  * | Chromium | 142.0.7444.265 | embedded version string |
  * | `zotero-manager` | API `version: 1` (plugin v1.1.9) | `src/api.ts`, read 2026-08-17 |
  * | `md-annotation` | v1.0.22, public `api` | `src/api.ts`, read 2026-08-29 |
- * | `obsidian-excalidraw-plugin` | v2.27.3, public `window.ExcalidrawAutomate.createSVG`; view type `excalidraw` and embedded-note leaves mounted inside the board view's DOM | `main.js`, read 2026-09-12 / 2026-09-13 |
+ * | `obsidian-excalidraw-plugin` | v2.27.3, public `window.ExcalidrawAutomate` (`createSVG`, `getAPI`, `reset`, `addText`, `style.fontFamily`); canvas-file-node DOM (`.canvas-node-container > .canvas-node-content.markdown-embed > .markdown-embed-content > .markdown-preview-view`) it hosts embedded notes in; view type `excalidraw` and embedded-note leaves mounted inside the board view's DOM | `main.js`, read 2026-09-12 / 2026-09-13 |
  *
  * The audit named no Obsidian internal beyond these; in particular it specified no file
  * explorer access, so none is taken.
@@ -95,12 +95,33 @@ interface ExcalidrawAutomateApi {
 		convertMarkdownLinksToObsidianURLs?: boolean,
 		includeInternalLinks?: boolean,
 	): Promise<SVGSVGElement>;
+	/** "Returns a new instance of ExcalidrawAutomate." — one whose scene is its own. */
+	getAPI(): ExcalidrawAutomateApi;
+	/** "clear() + reset all style values to default". */
+	reset(): void;
+	/** Adds a text element to this instance's own scene, drawn in `style.fontFamily`. */
+	addText(x: number, y: number, text: string): string;
+	style: { fontFamily: number };
 }
 
 function asExcalidrawAutomateApi(candidate: unknown): ExcalidrawAutomateApi | null {
 	if (candidate === null || typeof candidate !== 'object') return null;
 	const api = candidate as Partial<ExcalidrawAutomateApi>;
 	return typeof api.createSVG === 'function' ? (api as ExcalidrawAutomateApi) : null;
+}
+
+/**
+ * A private `ExcalidrawAutomate` instance, for building a throwaway scene without touching the
+ * shared `window.ExcalidrawAutomate` a user's Templater or QuickAdd script may be mid-way through
+ * using. `getAPI` registers every instance it makes with the plugin, so callers should create one
+ * and keep it, not one per call. `null` when the plugin is off or its API has a different shape.
+ */
+export function createExcalidrawAutomateInstance(app: App): ExcalidrawAutomateApi | null {
+	const shared = getExcalidrawAutomate(app);
+	if (shared === null || typeof shared.getAPI !== 'function') return null;
+	const instance = asExcalidrawAutomateApi(shared.getAPI());
+	if (instance === null || typeof instance.reset !== 'function' || typeof instance.addText !== 'function') return null;
+	return typeof instance.style === 'object' && instance.style !== null ? instance : null;
 }
 
 /**

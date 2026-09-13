@@ -1,7 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { isExcalidrawNote, resolveEmbedLinkTarget, resolveExportTarget } from '../src/core/excalidraw';
+import {
+	FONT_SAMPLE_TEXT,
+	excalidrawFontIds,
+	isExcalidrawNote,
+	resolveEmbedLinkTarget,
+	resolveExportTarget,
+} from '../src/core/excalidraw';
 
 describe('isExcalidrawNote', () => {
 	it('recognises the .excalidraw.md filename convention regardless of frontmatter', () => {
@@ -22,6 +28,21 @@ describe('isExcalidrawNote', () => {
 	it('is false for an ordinary note', () => {
 		expect(isExcalidrawNote('Notes/Whatever.md', { tags: ['drawing'] })).toBe(false);
 		expect(isExcalidrawNote('Notes/Whatever.md', undefined)).toBe(false);
+	});
+});
+
+describe('excalidrawFontIds', () => {
+	it("maps Excalidraw's own families to their scene font ids, once each, and ignores other fonts", () => {
+		expect(excalidrawFontIds(['Virgil', 'Segoe UI', 'sans-serif', 'Virgil', 'Excalifont'])).toEqual([1, 5]);
+		expect(excalidrawFontIds(['Helvetica', 'Inter'])).toEqual([]);
+	});
+});
+
+describe('FONT_SAMPLE_TEXT', () => {
+	it('covers printable ASCII and the typographic characters notes commonly use', () => {
+		for (const ch of ['A', 'z', '0', '>', '<', '=', '(', '.', 'é', '–', '—', '’', '“', '•', '−', '⇒', '→']) {
+			expect(FONT_SAMPLE_TEXT).toContain(ch);
+		}
 	});
 });
 
@@ -84,6 +105,23 @@ describe('excalidraw-render source guard', () => {
 		const args = (call?.[1] ?? '').split(',').map((arg) => arg.trim());
 		// file.path, embedFont, exportSettings, loader, theme, padding, convertMarkdownLinksToObsidianURLs
 		expect(args[6]).toBe('true');
+	});
+
+	// A user's CSS snippet for embeds on a board is written against Obsidian's canvas-file-node DOM
+	// (e.g. `.canvas-node-container .markdown-rendered h2`). Renaming or dropping a level here
+	// silently prints every embed unstyled, so the chain is pinned.
+	it("renders an embedded note inside the canvas file node's class chain", () => {
+		for (const cls of [
+			"'canvas-node-container'",
+			"'canvas-node-content markdown-embed'",
+			"'markdown-embed-content'",
+			"'markdown-preview-view markdown-rendered'",
+			"'markdown-preview-sizer markdown-preview-section'",
+		]) {
+			expect(source).toContain(`cls: ${cls}`);
+		}
+		expect(source).toMatch(/MarkdownRenderer\.render\(app, targetMarkdown, node\.sizer,/);
+		expect(source).toContain('freezeComputedStyles(');
 	});
 });
 

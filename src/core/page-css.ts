@@ -65,12 +65,11 @@ mjx-container svg { max-width: 100%; height: auto; }
 .footnote-backref { display: none; }
 
 /* An Excalidraw canvas note (see shell/excalidraw-render.ts): the drawing itself is
-   Excalidraw's own rendered SVG, styled by Excalidraw, not by this stylesheet. Only the
-   note content swapped into a note-embed box needs rules here, and only enough to keep it
-   readable at the small size such a box is usually drawn at, plus room to grow taller
-   rather than clip — the "fit to page" mechanism handles shrinking the whole drawing back
-   down afterwards, the same as it would any other oversized element. */
-.mx-excalidraw-embed-content { font-size: 10px; line-height: 1.3; overflow: visible; }
+   Excalidraw's own rendered SVG, and the note content swapped into a note-embed box carries
+   the app's own computed styles inline, frozen from how Obsidian styles that box on screen —
+   so no font or size is set here, which would only be overridden. The one rule left is room
+   to grow taller rather than clip; "fit to page" shrinks the whole drawing back down after. */
+.mx-excalidraw-embed-content { overflow: visible; }
 .mx-excalidraw-placeholder { font-style: italic; opacity: 0.7; }
 
 /* Running-head source. The wrapper carries the note name and the export timestamp so a

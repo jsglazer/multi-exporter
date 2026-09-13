@@ -3,6 +3,8 @@ import type { App, Component, TFile } from 'obsidian';
 import { getExcalidrawAutomate } from '../adapter/obsidian-internals';
 import { isExcalidrawNote, resolveEmbedLinkTarget } from '../core/excalidraw';
 import { waitForDomStability } from './dom-stability';
+import { fontFaceCssFor } from './excalidraw-fonts';
+import { freezeComputedStyles } from './style-snapshot';
 
 /**
  * Rendering an Excalidraw canvas note as a printable board.
@@ -21,6 +23,12 @@ import { waitForDomStability } from './dom-stability';
  * invisible bleed. This does not reflow boxes *below* the one that grew, which is the one
  * known gap — every board in current use has enough vertical clearance that this has not
  * mattered, but a dense board could see two boxes overlap.
+ *
+ * A swapped-in note is styled to match the screen, not the export profile: it is rendered inside
+ * the same canvas-file-node DOM Excalidraw hosts it in on the board, so the theme and any snippet
+ * written against that DOM style it exactly as they do live, and those styles are then frozen
+ * inline (`style-snapshot.ts`) and its fonts carried along (`excalidraw-fonts.ts`), because none
+ * of the app's CSS exists in the guest webview.
  */
 
 const PLACEHOLDER_CLASS = 'mx-excalidraw-placeholder';
@@ -29,6 +37,16 @@ const EMBED_CONTENT_CLASS = 'mx-excalidraw-embed-content';
 interface SwappedBox {
 	readonly foreignObject: SVGForeignObjectElement;
 	readonly declaredHeight: number;
+	/** The canvas-node scaffold a markdown note was rendered into; absent for a nested board or placeholder. */
+	readonly canvasNode: CanvasNode | null;
+}
+
+/** The nested elements Obsidian's canvas file node — and so Excalidraw's embed — is built from. */
+interface CanvasNode {
+	/** Every level that carries the box's fixed height, outermost first. */
+	readonly sized: readonly HTMLElement[];
+	readonly previewView: HTMLElement;
+	readonly sizer: HTMLElement;
 }
 
 export async function renderExcalidrawBoard(
@@ -71,22 +89,33 @@ export async function renderExcalidrawBoard(
 		const linkTarget = resolveEmbedLinkTarget(href);
 		if (linkTarget === null) continue; // Not a vault-note embed — leave Excalidraw's own rendering as-is.
 
+		const declaredHeight = parseFloat(foreignObject.getAttribute('height') ?? '0');
 		const outcome = await renderEmbedBox(app, file, linkTarget, foreignObject, component, ancestors);
-		if (!outcome) continue;
+		if (outcome === false) continue;
 		hideLinkLabel(anchor);
-		swapped.push({ foreignObject, declaredHeight: parseFloat(foreignObject.getAttribute('height') ?? '0') });
+		swapped.push({ foreignObject, declaredHeight, canvasNode: outcome === true ? null : outcome });
 	}
 
-	if (swapped.length > 0) {
-		await waitForDomStability(container);
-		growToFitOverflow(svg, swapped);
+	if (swapped.length === 0) return;
+	await waitForDomStability(container);
+
+	const fontStacks = new Set<string>();
+	for (const box of swapped) {
+		if (box.canvasNode === null) continue;
+		releaseHeightIfOverflowing(box.canvasNode, box.declaredHeight);
+		const wrapper = box.foreignObject.firstElementChild;
+		if (wrapper === null) continue;
+		for (const stack of freezeComputedStyles(wrapper as HTMLElement)) fontStacks.add(stack);
 	}
+	growToFitOverflow(svg, swapped);
+	if (fontStacks.size > 0) addStyleToSvg(svg, await fontFaceCssFor(app, fontStacks));
 }
 
 /**
  * Replace one embeddable box's content with the note it links to, or an explanatory
- * placeholder when that cannot be done. Returns whether anything was swapped in, so the
- * caller knows whether to also hide the box's raw-URL label.
+ * placeholder when that cannot be done. Returns the canvas-node scaffold when a markdown note
+ * was rendered (so the caller can freeze its styles), `true` for any other swap, and `false`
+ * when nothing was swapped — the caller hides the box's raw-URL label on anything but `false`.
  */
 async function renderEmbedBox(
 	app: App,
@@ -95,7 +124,7 @@ async function renderEmbedBox(
 	foreignObject: SVGForeignObjectElement,
 	component: Component,
 	ancestors: ReadonlySet<string>,
-): Promise<boolean> {
+): Promise<CanvasNode | boolean> {
 	const target = app.metadataCache.getFirstLinkpathDest(linkTarget, file.path);
 	if (target === null) {
 		replaceForeignObjectContent(foreignObject, (wrapper) => placeholder(wrapper, `Missing note: ${linkTarget}`));
@@ -120,8 +149,72 @@ async function renderEmbedBox(
 
 	const targetMarkdown = await app.vault.cachedRead(target);
 	const wrapper = replaceForeignObjectContent(foreignObject, () => undefined);
-	await MarkdownRenderer.render(app, targetMarkdown, wrapper, target.path, component);
-	return true;
+	const node = buildCanvasNode(wrapper, foreignObject);
+	await MarkdownRenderer.render(app, targetMarkdown, node.sizer, target.path, component);
+	return node;
+}
+
+/**
+ * The DOM Obsidian's canvas file node renders a note into, which is what Excalidraw mounts in an
+ * embeddable box on screen: `.canvas-node-container > .canvas-node-content.markdown-embed >
+ * .markdown-embed-content > .markdown-preview-view.markdown-rendered > .markdown-preview-sizer`.
+ * Matching it is what makes a snippet like `.canvas-node-container .markdown-rendered h2 { ... }`
+ * apply here the way it does on the board.
+ *
+ * Three things differ on purpose. The box's own border and fill are left to Excalidraw's drawn
+ * rectangle underneath (a second, CSS border would double it). `overflow` is visible rather than
+ * clipped, so a font that measures a pixel wider in print costs a wrapped line, not lost text. And
+ * `theme-light` is set on the wrapper, because the PDF is printed on white paper whatever theme
+ * Obsidian is in.
+ */
+function buildCanvasNode(wrapper: HTMLElement, foreignObject: SVGForeignObjectElement): CanvasNode {
+	const width = parseFloat(foreignObject.getAttribute('width') ?? '0');
+	const height = parseFloat(foreignObject.getAttribute('height') ?? '0');
+	wrapper.classList.add('theme-light');
+
+	const container = wrapper.createDiv({ cls: 'canvas-node-container' });
+	container.setCssStyles({
+		width: `${width}px`,
+		height: `${height}px`,
+		backgroundColor: 'transparent',
+		border: 'none',
+		borderRadius: '0',
+		boxShadow: 'none',
+		contain: 'none',
+		overflow: 'visible',
+	});
+	container.setCssProps({ '--canvas-node-height': `${height}px` });
+	const content = container.createDiv({ cls: 'canvas-node-content markdown-embed' });
+	const embedContent = content.createDiv({ cls: 'markdown-embed-content' });
+	const previewView = embedContent.createDiv({ cls: 'markdown-preview-view markdown-rendered' });
+	const sizer = previewView.createDiv({ cls: 'markdown-preview-sizer markdown-preview-section' });
+	for (const level of [content, embedContent, previewView]) level.setCssStyles({ height: '100%', overflow: 'visible' });
+	return { sized: [container, content, embedContent, previewView], previewView, sizer };
+}
+
+/**
+ * On screen a box whose note is taller than the box scrolls inside it. On paper there is no
+ * scrolling, so such a box lets go of its fixed height and grows instead (`growToFitOverflow`
+ * then grows the drawing to match). A box whose note fits keeps its height, which is what keeps
+ * Obsidian's vertical-centring spacers working exactly as they do on the board.
+ */
+function releaseHeightIfOverflowing(node: CanvasNode, declaredHeight: number): void {
+	if (node.previewView.scrollHeight <= declaredHeight + 1) return;
+	for (const level of node.sized) level.setCssStyles({ height: 'auto' });
+}
+
+/** Append CSS to the drawing's own `<defs>`, where Excalidraw's export keeps its embedded fonts. */
+function addStyleToSvg(svg: SVGSVGElement, css: string): void {
+	if (css === '') return;
+	const namespace = 'http://www.w3.org/2000/svg';
+	let defs = svg.querySelector('defs');
+	if (defs === null) {
+		defs = activeDocument.createElementNS(namespace, 'defs');
+		svg.prepend(defs);
+	}
+	const style = activeDocument.createElementNS(namespace, 'style');
+	style.textContent = css;
+	defs.appendChild(style);
 }
 
 /** Empty a foreignObject and give it a fresh, unclipped HTML wrapper for `fill` to populate. */

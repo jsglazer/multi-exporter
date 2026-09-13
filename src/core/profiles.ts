@@ -124,10 +124,10 @@ h1 + p, h2 + p { text-indent: 0; }
 .mx-endnotes { break-before: page; line-height: 1.5; }
 `;
 
-const EXCALIDRAW_CSS = `/* Excalidraw boards: the drawing itself is Excalidraw's own rendered SVG and carries its
-   own styling, so there is nothing to normalise here beyond how a swapped-in note-embed's
-   content reads at the small size a canvas box is usually drawn at — see the
-   .mx-excalidraw-embed-content rule in the base stylesheet, which every profile already gets. */
+const EXCALIDRAW_CSS = `/* Excalidraw boards print as a replica of the canvas on screen: the drawing is Excalidraw's
+   own rendered SVG, and each note-embed box carries the styles Obsidian (theme and CSS
+   snippets) gives it live, frozen inline. A rule here targeting the embedded note's elements
+   would lose to those inline styles unless marked !important. */
 `;
 
 export function createDefaultProfiles(): Profile[] {

@@ -28,6 +28,47 @@ export function isExcalidrawNote(path: string, frontmatter: Record<string, unkno
 }
 
 /**
+ * Excalidraw's built-in font families by the numeric id its scene elements and
+ * `ExcalidrawAutomate.style.fontFamily` use, mirrored from the plugin's own markdown-embed font
+ * switch in `main.js` (`case"Virgil":getCSSFontDefinition(1)` ...). `Helvetica` is id 2 there too,
+ * but it is a system font the guest already has, so it is not listed.
+ */
+export const EXCALIDRAW_FONT_IDS: Readonly<Record<string, number>> = {
+	Virgil: 1,
+	Cascadia: 3,
+	Excalifont: 5,
+	Nunito: 6,
+	'Lilita One': 7,
+	'Comic Shanns': 8,
+	'Liberation Sans': 9,
+};
+
+/** The Excalidraw font ids among a set of family names, each once, in ascending order. */
+export function excalidrawFontIds(families: Iterable<string>): number[] {
+	const ids = new Set<number>();
+	for (const family of families) {
+		const id = EXCALIDRAW_FONT_IDS[family];
+		if (id !== undefined) ids.add(id);
+	}
+	return [...ids].sort((a, b) => a - b);
+}
+
+/**
+ * The text drawn in each font when asking Excalidraw to embed it.
+ *
+ * Excalidraw's SVG export may subset an embedded font to the glyphs the scene actually uses, so
+ * the sample has to cover whatever a note is likely to contain: printable ASCII, Latin-1, and the
+ * typographic and arrow characters notes commonly use. A character outside it falls back to the
+ * next family in the stack rather than disappearing.
+ */
+export const FONT_SAMPLE_TEXT = (() => {
+	let text = '';
+	for (let code = 0x20; code <= 0x7e; code++) text += String.fromCharCode(code);
+	for (let code = 0xa1; code <= 0xff; code++) text += String.fromCharCode(code);
+	return `${text}‘’“”–—…•·−×÷±≤≥≠≈°€£™→←↑↓⇒⇐⇔`;
+})();
+
+/**
  * Which note an "export the active note" command means.
  *
  * Clicking into a note embedded on an Excalidraw board opens a real editor for that note inside

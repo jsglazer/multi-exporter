@@ -4300,6 +4300,13 @@ function asExcalidrawAutomateApi(candidate) {
   const api = candidate;
   return typeof api.createSVG === "function" ? api : null;
 }
+function createExcalidrawAutomateInstance(app) {
+  const shared = getExcalidrawAutomate(app);
+  if (shared === null || typeof shared.getAPI !== "function") return null;
+  const instance = asExcalidrawAutomateApi(shared.getAPI());
+  if (instance === null || typeof instance.reset !== "function" || typeof instance.addText !== "function") return null;
+  return typeof instance.style === "object" && instance.style !== null ? instance : null;
+}
 function getExcalidrawAutomate(app) {
   if (!isPluginEnabled(app, EXCALIDRAW_PLUGIN_ID)) return null;
   return asExcalidrawAutomateApi(window.ExcalidrawAutomate);
@@ -4515,6 +4522,29 @@ function isExcalidrawNote(path, frontmatter) {
   if (path.endsWith(".excalidraw.md") || path.endsWith(".excalidraw")) return true;
   return Boolean(frontmatter == null ? void 0 : frontmatter["excalidraw-plugin"]);
 }
+var EXCALIDRAW_FONT_IDS = {
+  Virgil: 1,
+  Cascadia: 3,
+  Excalifont: 5,
+  Nunito: 6,
+  "Lilita One": 7,
+  "Comic Shanns": 8,
+  "Liberation Sans": 9
+};
+function excalidrawFontIds(families) {
+  const ids = /* @__PURE__ */ new Set();
+  for (const family of families) {
+    const id = EXCALIDRAW_FONT_IDS[family];
+    if (id !== void 0) ids.add(id);
+  }
+  return [...ids].sort((a, b) => a - b);
+}
+var FONT_SAMPLE_TEXT = (() => {
+  let text = "";
+  for (let code = 32; code <= 126; code++) text += String.fromCharCode(code);
+  for (let code = 161; code <= 255; code++) text += String.fromCharCode(code);
+  return `${text}\u2018\u2019\u201C\u201D\u2013\u2014\u2026\u2022\xB7\u2212\xD7\xF7\xB1\u2264\u2265\u2260\u2248\xB0\u20AC\xA3\u2122\u2192\u2190\u2191\u2193\u21D2\u21D0\u21D4`;
+})();
 function resolveExportTarget(activeFile, enclosingBoards) {
   var _a;
   return (_a = enclosingBoards[enclosingBoards.length - 1]) != null ? _a : activeFile;
@@ -4690,12 +4720,11 @@ mjx-container svg { max-width: 100%; height: auto; }
 .footnote-backref { display: none; }
 
 /* An Excalidraw canvas note (see shell/excalidraw-render.ts): the drawing itself is
-   Excalidraw's own rendered SVG, styled by Excalidraw, not by this stylesheet. Only the
-   note content swapped into a note-embed box needs rules here, and only enough to keep it
-   readable at the small size such a box is usually drawn at, plus room to grow taller
-   rather than clip \u2014 the "fit to page" mechanism handles shrinking the whole drawing back
-   down afterwards, the same as it would any other oversized element. */
-.mx-excalidraw-embed-content { font-size: 10px; line-height: 1.3; overflow: visible; }
+   Excalidraw's own rendered SVG, and the note content swapped into a note-embed box carries
+   the app's own computed styles inline, frozen from how Obsidian styles that box on screen \u2014
+   so no font or size is set here, which would only be overridden. The one rule left is room
+   to grow taller rather than clip; "fit to page" shrinks the whole drawing back down after. */
+.mx-excalidraw-embed-content { overflow: visible; }
 .mx-excalidraw-placeholder { font-style: italic; opacity: 0.7; }
 
 /* Running-head source. The wrapper carries the note name and the export timestamp so a
@@ -4925,10 +4954,10 @@ h1 + p, h2 + p { text-indent: 0; }
 .mx-bibliography > div { text-indent: -2em; padding-left: 2em; margin-bottom: 0.5em; }
 .mx-endnotes { break-before: page; line-height: 1.5; }
 `;
-var EXCALIDRAW_CSS = `/* Excalidraw boards: the drawing itself is Excalidraw's own rendered SVG and carries its
-   own styling, so there is nothing to normalise here beyond how a swapped-in note-embed's
-   content reads at the small size a canvas box is usually drawn at \u2014 see the
-   .mx-excalidraw-embed-content rule in the base stylesheet, which every profile already gets. */
+var EXCALIDRAW_CSS = `/* Excalidraw boards print as a replica of the canvas on screen: the drawing is Excalidraw's
+   own rendered SVG, and each note-embed box carries the styles Obsidian (theme and CSS
+   snippets) gives it live, frozen inline. A rule here targeting the embedded note's elements
+   would lose to those inline styles unless marked !important. */
 `;
 function createDefaultProfiles() {
   return [
@@ -55875,18 +55904,241 @@ function sleep(ms) {
 
 // src/shell/excalidraw-render.ts
 var import_obsidian2 = require("obsidian");
+
+// src/core/style-snapshot.ts
+var SNAPSHOT_PROPERTIES = [
+  "display",
+  "box-sizing",
+  "flex-direction",
+  "flex-grow",
+  "flex-shrink",
+  "flex-basis",
+  "align-items",
+  "justify-content",
+  "row-gap",
+  "column-gap",
+  "min-height",
+  "max-height",
+  "max-width",
+  "margin-top",
+  "margin-right",
+  "margin-bottom",
+  "margin-left",
+  "padding-top",
+  "padding-right",
+  "padding-bottom",
+  "padding-left",
+  "border-top-width",
+  "border-right-width",
+  "border-bottom-width",
+  "border-left-width",
+  "border-top-style",
+  "border-right-style",
+  "border-bottom-style",
+  "border-left-style",
+  "border-top-color",
+  "border-right-color",
+  "border-bottom-color",
+  "border-left-color",
+  "border-top-left-radius",
+  "border-top-right-radius",
+  "border-bottom-right-radius",
+  "border-bottom-left-radius",
+  "background-color",
+  "color",
+  "opacity",
+  "font-family",
+  "font-size",
+  "font-weight",
+  "font-style",
+  "font-variant-caps",
+  "line-height",
+  "letter-spacing",
+  "word-spacing",
+  "text-align",
+  "text-indent",
+  "text-transform",
+  "text-decoration-line",
+  "text-decoration-style",
+  "text-decoration-color",
+  "text-decoration-thickness",
+  "text-underline-offset",
+  "vertical-align",
+  "white-space",
+  "overflow-wrap",
+  "word-break",
+  "list-style-type",
+  "list-style-position",
+  "border-collapse"
+];
+function serializeDeclarations(entries) {
+  const parts = [];
+  for (const [name, value] of entries) {
+    if (value === "") continue;
+    parts.push(`${name}: ${value};`);
+  }
+  return parts.join(" ");
+}
+function pseudoContentText(content) {
+  var _a;
+  const trimmed = content.trim();
+  if (trimmed === "" || trimmed === "none" || trimmed === "normal") return null;
+  const quoted = /^(["'])((?:\\.|(?!\1).)*)\1$/.exec(trimmed);
+  if (quoted === null) return "";
+  return ((_a = quoted[2]) != null ? _a : "").replace(/\\(.)/g, "$1");
+}
+function fontFamiliesIn(stack) {
+  const families = [];
+  for (const raw of stack.split(",")) {
+    const family = raw.trim().replace(/^(["'])(.*)\1$/, "$2").trim();
+    if (family !== "") families.push(family);
+  }
+  return families;
+}
+function extractFontFaceRules(css) {
+  var _a;
+  return (_a = css.match(/@font-face\s*\{[^}]*\}/g)) != null ? _a : [];
+}
+
+// src/shell/excalidraw-fonts.ts
+var excalidrawFontCache = /* @__PURE__ */ new Map();
+var automate;
+async function fontFaceCssFor(app, stacks) {
+  const families = /* @__PURE__ */ new Set();
+  for (const stack of stacks) for (const family of fontFamiliesIn(stack)) families.add(family);
+  const parts = [];
+  for (const id of excalidrawFontIds(families)) parts.push(await excalidrawFontCss(app, id));
+  const others = [...families].filter((family) => EXCALIDRAW_FONT_IDS[family] === void 0);
+  parts.push(await stylesheetFontCss(others));
+  return parts.filter((part) => part !== "").join("\n");
+}
+async function excalidrawFontCss(app, id) {
+  const cached = excalidrawFontCache.get(id);
+  if (cached !== void 0) return cached;
+  if (automate === void 0 || automate === null) automate = createExcalidrawAutomateInstance(app);
+  if (automate === null) return "";
+  let css = "";
+  try {
+    automate.reset();
+    automate.style.fontFamily = id;
+    automate.addText(0, 0, FONT_SAMPLE_TEXT);
+    const svg = await automate.createSVG(void 0, true, void 0, void 0, "light", 0);
+    const styles = Array.from(svg.querySelectorAll("style")).map((style) => {
+      var _a;
+      return (_a = style.textContent) != null ? _a : "";
+    });
+    css = await inlineFonts(extractFontFaceRules(styles.join("\n")).join("\n"));
+  } catch (error2) {
+    console.warn("[multi-exporter] Excalidraw font %d could not be embedded; it will print in a fallback font.", id, error2);
+  } finally {
+    automate.reset();
+  }
+  if (css !== "") excalidrawFontCache.set(id, css);
+  return css;
+}
+async function stylesheetFontCss(families) {
+  var _a;
+  if (families.length === 0) return "";
+  const wanted = new Set(families);
+  const rules = [];
+  for (const sheet of Array.from(activeDocument.styleSheets)) {
+    let cssRules;
+    try {
+      cssRules = sheet.cssRules;
+    } catch (e) {
+      continue;
+    }
+    const base = (_a = sheet.href) != null ? _a : activeDocument.baseURI;
+    for (const rule of Array.from(cssRules)) {
+      if (!rule.cssText.startsWith("@font-face")) continue;
+      const family = fontFamiliesIn(rule.style.getPropertyValue("font-family"))[0];
+      if (family === void 0 || !wanted.has(family)) continue;
+      rules.push(absoluteUrls(rule.cssText, base));
+    }
+  }
+  return rules.length === 0 ? "" : await inlineFonts(rules.join("\n"));
+}
+function absoluteUrls(css, base) {
+  return css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, (whole, _quote, url) => {
+    if (url.startsWith("data:")) return whole;
+    try {
+      return `url("${new URL(url, base).href}")`;
+    } catch (e) {
+      return whole;
+    }
+  });
+}
+
+// src/shell/style-snapshot.ts
+var XHTML_NAMESPACE = "http://www.w3.org/1999/xhtml";
+var OPAQUE_TAGS = /* @__PURE__ */ new Set(["svg", "math", "mjx-container"]);
+var VOID_TAGS = /* @__PURE__ */ new Set(["area", "br", "col", "embed", "hr", "img", "input", "source", "track", "wbr"]);
+function freezeComputedStyles(root) {
+  var _a;
+  const view = root.ownerDocument.defaultView;
+  const families = /* @__PURE__ */ new Set();
+  if (view === null) return families;
+  const plans = [];
+  for (const element of htmlElementsUnder(root)) {
+    const computed = view.getComputedStyle(element);
+    families.add(computed.getPropertyValue("font-family"));
+    const canHoldChildren = !VOID_TAGS.has(element.tagName.toLowerCase());
+    plans.push({
+      element,
+      declarations: declarationsOf(computed),
+      before: canHoldChildren ? pseudoPlan(view.getComputedStyle(element, "::before")) : null,
+      after: canHoldChildren ? pseudoPlan(view.getComputedStyle(element, "::after")) : null
+    });
+  }
+  for (const plan of plans) {
+    const existing = (_a = plan.element.getAttribute("style")) != null ? _a : "";
+    plan.element.setAttribute("style", `${existing} ${plan.declarations}`.trim());
+    if (plan.before !== null) plan.element.prepend(standIn(plan.element, plan.before));
+    if (plan.after !== null) plan.element.append(standIn(plan.element, plan.after));
+  }
+  return families;
+}
+function htmlElementsUnder(root) {
+  const found = [];
+  const visit = (element) => {
+    if (element.namespaceURI !== XHTML_NAMESPACE) return;
+    found.push(element);
+    if (OPAQUE_TAGS.has(element.tagName.toLowerCase())) return;
+    for (const child of Array.from(element.children)) visit(child);
+  };
+  visit(root);
+  return found;
+}
+function declarationsOf(computed) {
+  return serializeDeclarations(SNAPSHOT_PROPERTIES.map((name) => [name, computed.getPropertyValue(name)]));
+}
+function pseudoPlan(computed) {
+  const text = pseudoContentText(computed.getPropertyValue("content"));
+  const display = computed.getPropertyValue("display");
+  if (text === null || display === "none") return null;
+  return { text, declarations: declarationsOf(computed), block: display !== "inline" };
+}
+function standIn(parent, plan) {
+  const element = parent.ownerDocument.createElement(plan.block ? "div" : "span");
+  element.setAttribute("style", plan.declarations);
+  element.setAttribute("aria-hidden", "true");
+  element.textContent = plan.text;
+  return element;
+}
+
+// src/shell/excalidraw-render.ts
 var PLACEHOLDER_CLASS = "mx-excalidraw-placeholder";
 var EMBED_CONTENT_CLASS = "mx-excalidraw-embed-content";
 async function renderExcalidrawBoard(app, file, container, component, ancestors) {
   var _a;
-  const automate = getExcalidrawAutomate(app);
-  if (automate === null) {
+  const automate2 = getExcalidrawAutomate(app);
+  if (automate2 === null) {
     placeholder(container, "The Excalidraw plugin is required to export this drawing, and is not enabled.");
     return;
   }
   let svg;
   try {
-    svg = await automate.createSVG(file.path, true, void 0, void 0, void 0, void 0, true);
+    svg = await automate2.createSVG(file.path, true, void 0, void 0, void 0, void 0, true);
   } catch (error2) {
     placeholder(container, `This Excalidraw drawing could not be rendered: ${errorMessage(error2)}`);
     return;
@@ -55901,15 +56153,24 @@ async function renderExcalidrawBoard(app, file, container, component, ancestors)
     if (href === null || foreignObject === null) continue;
     const linkTarget = resolveEmbedLinkTarget(href);
     if (linkTarget === null) continue;
+    const declaredHeight = parseFloat((_a = foreignObject.getAttribute("height")) != null ? _a : "0");
     const outcome = await renderEmbedBox(app, file, linkTarget, foreignObject, component, ancestors);
-    if (!outcome) continue;
+    if (outcome === false) continue;
     hideLinkLabel(anchor);
-    swapped.push({ foreignObject, declaredHeight: parseFloat((_a = foreignObject.getAttribute("height")) != null ? _a : "0") });
+    swapped.push({ foreignObject, declaredHeight, canvasNode: outcome === true ? null : outcome });
   }
-  if (swapped.length > 0) {
-    await waitForDomStability(container);
-    growToFitOverflow(svg, swapped);
+  if (swapped.length === 0) return;
+  await waitForDomStability(container);
+  const fontStacks = /* @__PURE__ */ new Set();
+  for (const box of swapped) {
+    if (box.canvasNode === null) continue;
+    releaseHeightIfOverflowing(box.canvasNode, box.declaredHeight);
+    const wrapper = box.foreignObject.firstElementChild;
+    if (wrapper === null) continue;
+    for (const stack of freezeComputedStyles(wrapper)) fontStacks.add(stack);
   }
+  growToFitOverflow(svg, swapped);
+  if (fontStacks.size > 0) addStyleToSvg(svg, await fontFaceCssFor(app, fontStacks));
 }
 async function renderEmbedBox(app, file, linkTarget, foreignObject, component, ancestors) {
   var _a;
@@ -55935,8 +56196,49 @@ async function renderEmbedBox(app, file, linkTarget, foreignObject, component, a
   }
   const targetMarkdown = await app.vault.cachedRead(target);
   const wrapper = replaceForeignObjectContent(foreignObject, () => void 0);
-  await import_obsidian2.MarkdownRenderer.render(app, targetMarkdown, wrapper, target.path, component);
-  return true;
+  const node = buildCanvasNode(wrapper, foreignObject);
+  await import_obsidian2.MarkdownRenderer.render(app, targetMarkdown, node.sizer, target.path, component);
+  return node;
+}
+function buildCanvasNode(wrapper, foreignObject) {
+  var _a, _b;
+  const width = parseFloat((_a = foreignObject.getAttribute("width")) != null ? _a : "0");
+  const height = parseFloat((_b = foreignObject.getAttribute("height")) != null ? _b : "0");
+  wrapper.classList.add("theme-light");
+  const container = wrapper.createDiv({ cls: "canvas-node-container" });
+  container.setCssStyles({
+    width: `${width}px`,
+    height: `${height}px`,
+    backgroundColor: "transparent",
+    border: "none",
+    borderRadius: "0",
+    boxShadow: "none",
+    contain: "none",
+    overflow: "visible"
+  });
+  container.setCssProps({ "--canvas-node-height": `${height}px` });
+  const content = container.createDiv({ cls: "canvas-node-content markdown-embed" });
+  const embedContent = content.createDiv({ cls: "markdown-embed-content" });
+  const previewView = embedContent.createDiv({ cls: "markdown-preview-view markdown-rendered" });
+  const sizer = previewView.createDiv({ cls: "markdown-preview-sizer markdown-preview-section" });
+  for (const level of [content, embedContent, previewView]) level.setCssStyles({ height: "100%", overflow: "visible" });
+  return { sized: [container, content, embedContent, previewView], previewView, sizer };
+}
+function releaseHeightIfOverflowing(node, declaredHeight) {
+  if (node.previewView.scrollHeight <= declaredHeight + 1) return;
+  for (const level of node.sized) level.setCssStyles({ height: "auto" });
+}
+function addStyleToSvg(svg, css) {
+  if (css === "") return;
+  const namespace = "http://www.w3.org/2000/svg";
+  let defs = svg.querySelector("defs");
+  if (defs === null) {
+    defs = activeDocument.createElementNS(namespace, "defs");
+    svg.prepend(defs);
+  }
+  const style = activeDocument.createElementNS(namespace, "style");
+  style.textContent = css;
+  defs.appendChild(style);
 }
 function replaceForeignObjectContent(foreignObject, fill2) {
   while (foreignObject.firstChild !== null) foreignObject.removeChild(foreignObject.firstChild);

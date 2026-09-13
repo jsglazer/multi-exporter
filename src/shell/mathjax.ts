@@ -110,7 +110,7 @@ const CSS_URL = /url\(\s*(['"]?)([^'")]+)\1\s*\)/g;
  * glyphs their exact shape, and leaving its original `app://` URL in place is harmless —
  * the guest simply cannot load it, which is where this started.
  */
-async function inlineFonts(css: string): Promise<string> {
+export async function inlineFonts(css: string): Promise<string> {
 	const urls = new Set<string>();
 	for (const match of css.matchAll(CSS_URL)) {
 		const url = match[2];
