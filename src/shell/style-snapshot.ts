@@ -60,8 +60,11 @@ export function freezeComputedStyles(root: HTMLElement): Set<string> {
 		// Appended after whatever the element already carried inline, so an inline style the
 		// shell set on purpose (a fixed box height, `overflow: visible`) survives for every
 		// property this does not copy, and agrees with it for every property it does.
-		const existing = plan.element.getAttribute('style') ?? '';
-		plan.element.setAttribute('style', `${existing} ${plan.declarations}`.trim());
+		// Joined with an explicit `;`: an inline style whose last declaration has no trailing
+		// semicolon would otherwise swallow the first frozen declaration into its value.
+		const existing = (plan.element.getAttribute('style') ?? '').trim();
+		const separator = existing === '' || existing.endsWith(';') ? ' ' : '; ';
+		plan.element.setAttribute('style', `${existing}${separator}${plan.declarations}`.trim());
 		if (plan.before !== null) plan.element.prepend(standIn(plan.element, plan.before));
 		if (plan.after !== null) plan.element.append(standIn(plan.element, plan.after));
 	}

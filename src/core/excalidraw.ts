@@ -69,6 +69,19 @@ export const FONT_SAMPLE_TEXT = (() => {
 })();
 
 /**
+ * A positive length in CSS pixels from an SVG attribute or inline style value (`"420"`, `"420px"`),
+ * or `null` when there is none — so a caller can fall through attribute -> style without treating
+ * a missing value as a zero-sized box.
+ */
+export function cssPixels(value: string | null | undefined): number | null {
+	if (value === null || value === undefined) return null;
+	const match = /^\s*(\d+(?:\.\d+)?)(px)?\s*$/.exec(value);
+	if (match === null) return null;
+	const pixels = Number(match[1]);
+	return pixels > 0 ? pixels : null;
+}
+
+/**
  * Which note an "export the active note" command means.
  *
  * Clicking into a note embedded on an Excalidraw board opens a real editor for that note inside

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
 	FONT_SAMPLE_TEXT,
+	cssPixels,
 	excalidrawFontIds,
 	isExcalidrawNote,
 	resolveEmbedLinkTarget,
@@ -28,6 +29,23 @@ describe('isExcalidrawNote', () => {
 	it('is false for an ordinary note', () => {
 		expect(isExcalidrawNote('Notes/Whatever.md', { tags: ['drawing'] })).toBe(false);
 		expect(isExcalidrawNote('Notes/Whatever.md', undefined)).toBe(false);
+	});
+});
+
+describe('cssPixels', () => {
+	it("reads Excalidraw's inline-style box size as well as a bare attribute number", () => {
+		expect(cssPixels('400px')).toBe(400);
+		expect(cssPixels(' 420 ')).toBe(420);
+		expect(cssPixels('13.5px')).toBe(13.5);
+	});
+
+	it('is null — not 0 — when there is no usable size, so the caller falls through to the next source', () => {
+		expect(cssPixels(null)).toBeNull();
+		expect(cssPixels(undefined)).toBeNull();
+		expect(cssPixels('')).toBeNull();
+		expect(cssPixels('0')).toBeNull();
+		expect(cssPixels('100%')).toBeNull();
+		expect(cssPixels('auto')).toBeNull();
 	});
 });
 
@@ -122,6 +140,14 @@ describe('excalidraw-render source guard', () => {
 		}
 		expect(source).toMatch(/MarkdownRenderer\.render\(app, targetMarkdown, node\.sizer,/);
 		expect(source).toContain('freezeComputedStyles(');
+	});
+
+	// Excalidraw sizes an embed's foreignObject by inline style, not attributes; reading only the
+	// attributes sized every canvas node 0px wide (Econ Layout.excalidraw 5.pdf, 2026-09-13).
+	it("sizes a box from the foreignObject's inline style when it has no width/height attributes", () => {
+		expect(source).toMatch(/cssPixels\(foreignObject\.style\.width\)/);
+		expect(source).toMatch(/cssPixels\(foreignObject\.style\.height\)/);
+		expect(source).not.toMatch(/foreignObject\.getAttribute\('(width|height)'\) \?\? '0'/);
 	});
 });
 

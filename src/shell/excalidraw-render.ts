@@ -1,7 +1,7 @@
 import { MarkdownRenderer } from 'obsidian';
 import type { App, Component, TFile } from 'obsidian';
 import { getExcalidrawAutomate } from '../adapter/obsidian-internals';
-import { isExcalidrawNote, resolveEmbedLinkTarget } from '../core/excalidraw';
+import { cssPixels, isExcalidrawNote, resolveEmbedLinkTarget } from '../core/excalidraw';
 import { waitForDomStability } from './dom-stability';
 import { fontFaceCssFor } from './excalidraw-fonts';
 import { freezeComputedStyles } from './style-snapshot';
@@ -89,7 +89,7 @@ export async function renderExcalidrawBoard(
 		const linkTarget = resolveEmbedLinkTarget(href);
 		if (linkTarget === null) continue; // Not a vault-note embed — leave Excalidraw's own rendering as-is.
 
-		const declaredHeight = parseFloat(foreignObject.getAttribute('height') ?? '0');
+		const declaredHeight = foreignObjectSize(foreignObject).height;
 		const outcome = await renderEmbedBox(app, file, linkTarget, foreignObject, component, ancestors);
 		if (outcome === false) continue;
 		hideLinkLabel(anchor);
@@ -168,8 +168,7 @@ async function renderEmbedBox(
  * Obsidian is in.
  */
 function buildCanvasNode(wrapper: HTMLElement, foreignObject: SVGForeignObjectElement): CanvasNode {
-	const width = parseFloat(foreignObject.getAttribute('width') ?? '0');
-	const height = parseFloat(foreignObject.getAttribute('height') ?? '0');
+	const { width, height } = foreignObjectSize(foreignObject);
 	wrapper.classList.add('theme-light');
 
 	const container = wrapper.createDiv({ cls: 'canvas-node-container' });
@@ -201,6 +200,23 @@ function buildCanvasNode(wrapper: HTMLElement, foreignObject: SVGForeignObjectEl
 function releaseHeightIfOverflowing(node: CanvasNode, declaredHeight: number): void {
 	if (node.previewView.scrollHeight <= declaredHeight + 1) return;
 	for (const level of node.sized) level.setCssStyles({ height: 'auto' });
+}
+
+/**
+ * A note-embed box's size in drawing units.
+ *
+ * Excalidraw does not size an embed's `<foreignObject>` with `width`/`height` attributes; it writes
+ * `style="width: 400px; height: 420px"` (see any SVG it exports). Reading only the attributes gave
+ * every box a size of 0 — which collapsed every embedded note to one letter per line the moment
+ * the box's width was actually used (1.0.39), and before that silently made the grow-to-fit step
+ * add each note's whole height as extra space. Attributes are still honoured first, in case a
+ * later Excalidraw writes them.
+ */
+function foreignObjectSize(foreignObject: SVGForeignObjectElement): { width: number; height: number } {
+	return {
+		width: cssPixels(foreignObject.getAttribute('width')) ?? cssPixels(foreignObject.style.width) ?? 0,
+		height: cssPixels(foreignObject.getAttribute('height')) ?? cssPixels(foreignObject.style.height) ?? 0,
+	};
 }
 
 /** Append CSS to the drawing's own `<defs>`, where Excalidraw's export keeps its embedded fonts. */

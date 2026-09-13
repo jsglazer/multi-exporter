@@ -4545,6 +4545,13 @@ var FONT_SAMPLE_TEXT = (() => {
   for (let code = 161; code <= 255; code++) text += String.fromCharCode(code);
   return `${text}\u2018\u2019\u201C\u201D\u2013\u2014\u2026\u2022\xB7\u2212\xD7\xF7\xB1\u2264\u2265\u2260\u2248\xB0\u20AC\xA3\u2122\u2192\u2190\u2191\u2193\u21D2\u21D0\u21D4`;
 })();
+function cssPixels(value) {
+  if (value === null || value === void 0) return null;
+  const match = /^\s*(\d+(?:\.\d+)?)(px)?\s*$/.exec(value);
+  if (match === null) return null;
+  const pixels = Number(match[1]);
+  return pixels > 0 ? pixels : null;
+}
 function resolveExportTarget(activeFile, enclosingBoards) {
   var _a;
   return (_a = enclosingBoards[enclosingBoards.length - 1]) != null ? _a : activeFile;
@@ -56091,8 +56098,9 @@ function freezeComputedStyles(root) {
     });
   }
   for (const plan of plans) {
-    const existing = (_a = plan.element.getAttribute("style")) != null ? _a : "";
-    plan.element.setAttribute("style", `${existing} ${plan.declarations}`.trim());
+    const existing = ((_a = plan.element.getAttribute("style")) != null ? _a : "").trim();
+    const separator = existing === "" || existing.endsWith(";") ? " " : "; ";
+    plan.element.setAttribute("style", `${existing}${separator}${plan.declarations}`.trim());
     if (plan.before !== null) plan.element.prepend(standIn(plan.element, plan.before));
     if (plan.after !== null) plan.element.append(standIn(plan.element, plan.after));
   }
@@ -56130,7 +56138,6 @@ function standIn(parent, plan) {
 var PLACEHOLDER_CLASS = "mx-excalidraw-placeholder";
 var EMBED_CONTENT_CLASS = "mx-excalidraw-embed-content";
 async function renderExcalidrawBoard(app, file, container, component, ancestors) {
-  var _a;
   const automate2 = getExcalidrawAutomate(app);
   if (automate2 === null) {
     placeholder(container, "The Excalidraw plugin is required to export this drawing, and is not enabled.");
@@ -56153,7 +56160,7 @@ async function renderExcalidrawBoard(app, file, container, component, ancestors)
     if (href === null || foreignObject === null) continue;
     const linkTarget = resolveEmbedLinkTarget(href);
     if (linkTarget === null) continue;
-    const declaredHeight = parseFloat((_a = foreignObject.getAttribute("height")) != null ? _a : "0");
+    const declaredHeight = foreignObjectSize(foreignObject).height;
     const outcome = await renderEmbedBox(app, file, linkTarget, foreignObject, component, ancestors);
     if (outcome === false) continue;
     hideLinkLabel(anchor);
@@ -56201,9 +56208,7 @@ async function renderEmbedBox(app, file, linkTarget, foreignObject, component, a
   return node;
 }
 function buildCanvasNode(wrapper, foreignObject) {
-  var _a, _b;
-  const width = parseFloat((_a = foreignObject.getAttribute("width")) != null ? _a : "0");
-  const height = parseFloat((_b = foreignObject.getAttribute("height")) != null ? _b : "0");
+  const { width, height } = foreignObjectSize(foreignObject);
   wrapper.classList.add("theme-light");
   const container = wrapper.createDiv({ cls: "canvas-node-container" });
   container.setCssStyles({
@@ -56227,6 +56232,13 @@ function buildCanvasNode(wrapper, foreignObject) {
 function releaseHeightIfOverflowing(node, declaredHeight) {
   if (node.previewView.scrollHeight <= declaredHeight + 1) return;
   for (const level of node.sized) level.setCssStyles({ height: "auto" });
+}
+function foreignObjectSize(foreignObject) {
+  var _a, _b, _c, _d;
+  return {
+    width: (_b = (_a = cssPixels(foreignObject.getAttribute("width"))) != null ? _a : cssPixels(foreignObject.style.width)) != null ? _b : 0,
+    height: (_d = (_c = cssPixels(foreignObject.getAttribute("height"))) != null ? _c : cssPixels(foreignObject.style.height)) != null ? _d : 0
+  };
 }
 function addStyleToSvg(svg, css) {
   if (css === "") return;
