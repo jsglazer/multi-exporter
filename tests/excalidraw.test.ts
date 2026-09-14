@@ -3,7 +3,9 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
 	FONT_SAMPLE_TEXT,
+	MIN_BOX_ZOOM,
 	cssPixels,
+	nextBoxZoom,
 	excalidrawFontIds,
 	isExcalidrawNote,
 	resolveEmbedLinkTarget,
@@ -46,6 +48,26 @@ describe('cssPixels', () => {
 		expect(cssPixels('0')).toBeNull();
 		expect(cssPixels('100%')).toBeNull();
 		expect(cssPixels('auto')).toBeNull();
+	});
+});
+
+describe('nextBoxZoom', () => {
+	it('leaves a note that fits its box alone', () => {
+		expect(nextBoxZoom(1, 200, 200)).toBeNull();
+		expect(nextBoxZoom(1, 150, 200)).toBeNull();
+	});
+
+	it('shrinks an overflowing note proportionally, a little past exact', () => {
+		expect(nextBoxZoom(1, 250, 200)).toBeCloseTo(0.784, 3);
+	});
+
+	it('keeps shrinking from the current zoom while it still overflows', () => {
+		expect(nextBoxZoom(0.8, 210, 200)).toBeCloseTo(0.747, 3);
+	});
+
+	it('stops at the floor rather than shrinking into illegibility', () => {
+		expect(nextBoxZoom(1, 1000, 200)).toBe(MIN_BOX_ZOOM);
+		expect(nextBoxZoom(MIN_BOX_ZOOM, 1000, 200)).toBeNull();
 	});
 });
 
@@ -148,6 +170,22 @@ describe('excalidraw-render source guard', () => {
 		expect(source).toMatch(/cssPixels\(foreignObject\.style\.width\)/);
 		expect(source).toMatch(/cssPixels\(foreignObject\.style\.height\)/);
 		expect(source).not.toMatch(/foreignObject\.getAttribute\('(width|height)'\) \?\? '0'/);
+	});
+
+	// Obsidian's reading view spaces a note through a pusher + `div.el-<tag>` section structure;
+	// without it a note's first paragraph kept a top margin the board never shows, pushing every
+	// box's text down and out past its border (RD Layout.excalidraw 3.pdf, 2026-09-14).
+	it('wraps rendered blocks in reading-view sections behind a pusher, and strips frontmatter', () => {
+		expect(source).toContain("pusher.className = 'markdown-preview-pusher'");
+		expect(source).toContain('section.className = `el-${child.tagName.toLowerCase()}`');
+		expect(source).toMatch(/getFrontMatterInfo\(source\)\.contentStart/);
+	});
+
+	// scrollHeight over-reports overflow for every canvas node (the grown sizer plus the spacers'
+	// minimum heights), which shrank notes that fit; the fit must use the content's real bottom.
+	it("decides a note overflows from its content's real bottom edge, not the view's scrollHeight", () => {
+		expect(source).toContain('nextBoxZoom(zoom, neededHeight(node), boxHeight)');
+		expect(source).not.toMatch(/nextBoxZoom\([^)]*scrollHeight/);
 	});
 });
 

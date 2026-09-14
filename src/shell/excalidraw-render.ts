@@ -1,7 +1,7 @@
-import { MarkdownRenderer } from 'obsidian';
+import { MarkdownRenderer, getFrontMatterInfo } from 'obsidian';
 import type { App, Component, TFile } from 'obsidian';
 import { getExcalidrawAutomate, getExcalidrawThemeVariables } from '../adapter/obsidian-internals';
-import { cssPixels, isExcalidrawNote, resolveEmbedLinkTarget } from '../core/excalidraw';
+import { cssPixels, isExcalidrawNote, nextBoxZoom, resolveEmbedLinkTarget } from '../core/excalidraw';
 import { waitForDomStability } from './dom-stability';
 import { fontFaceCssFor } from './excalidraw-fonts';
 import { freezeComputedStyles } from './style-snapshot';
@@ -43,8 +43,6 @@ interface SwappedBox {
 
 /** The nested elements Obsidian's canvas file node — and so Excalidraw's embed — is built from. */
 interface CanvasNode {
-	/** Every level that carries the box's fixed height, outermost first. */
-	readonly sized: readonly HTMLElement[];
 	readonly previewView: HTMLElement;
 	readonly sizer: HTMLElement;
 }
@@ -103,7 +101,8 @@ export async function renderExcalidrawBoard(
 	const fontStacks = new Set<string>();
 	for (const box of swapped) {
 		if (box.canvasNode === null) continue;
-		releaseHeightIfOverflowing(box.canvasNode, box.declaredHeight);
+		wrapReadingSections(box.canvasNode.sizer);
+		shrinkToFit(box.canvasNode, box.declaredHeight);
 		const wrapper = box.foreignObject.firstElementChild as HTMLElement | null;
 		if (wrapper === null) continue;
 		// Excalidraw's canvas palette, applied only for the freeze: the frozen styles carry the
@@ -153,7 +152,10 @@ async function renderEmbedBox(
 		return true;
 	}
 
-	const targetMarkdown = await app.vault.cachedRead(target);
+	// A canvas file node never shows a note's frontmatter; rendering it here would put a hidden
+	// block first in the sizer and shift which element the reading view's first-child rules hit.
+	const source = await app.vault.cachedRead(target);
+	const targetMarkdown = source.slice(getFrontMatterInfo(source).contentStart);
 	const wrapper = replaceForeignObjectContent(foreignObject, () => undefined);
 	const node = buildCanvasNode(wrapper, foreignObject);
 	await MarkdownRenderer.render(app, targetMarkdown, node.sizer, target.path, component);
@@ -194,18 +196,75 @@ function buildCanvasNode(wrapper: HTMLElement, foreignObject: SVGForeignObjectEl
 	const previewView = embedContent.createDiv({ cls: 'markdown-preview-view markdown-rendered' });
 	const sizer = previewView.createDiv({ cls: 'markdown-preview-sizer markdown-preview-section' });
 	for (const level of [content, embedContent, previewView]) level.setCssStyles({ height: '100%', overflow: 'visible' });
-	return { sized: [container, content, embedContent, previewView], previewView, sizer };
+	return { previewView, sizer };
 }
 
 /**
- * On screen a box whose note is taller than the box scrolls inside it. On paper there is no
- * scrolling, so such a box lets go of its fixed height and grows instead (`growToFitOverflow`
- * then grows the drawing to match). A box whose note fits keeps its height, which is what keeps
- * Obsidian's vertical-centring spacers working exactly as they do on the board.
+ * Give rendered markdown the section structure Obsidian's reading view gives it.
+ *
+ * `MarkdownRenderer.render` appends bare blocks (`<p>`, `<ul>`, ...). The reading view — and so a
+ * canvas file node on the board — puts a `.markdown-preview-pusher` first in the sizer and wraps
+ * every block in a `div.el-<tag>` section (see `"el-"+firstChild.tagName` in Obsidian's `app.js`).
+ * `app.css` spaces notes through that structure: `.markdown-preview-pusher + div > :first-child`
+ * and `div:last-child > :last-child` drop the outer margins of the first and last block. Without
+ * it, a note whose first line is a paragraph (a `**Title**` line, say) keeps a full paragraph
+ * margin above it that the board never shows, and every box's content sits lower than on screen.
  */
-function releaseHeightIfOverflowing(node: CanvasNode, declaredHeight: number): void {
-	if (node.previewView.scrollHeight <= declaredHeight + 1) return;
-	for (const level of node.sized) level.setCssStyles({ height: 'auto' });
+function wrapReadingSections(sizer: HTMLElement): void {
+	if (sizer.querySelector(':scope > .markdown-preview-pusher') !== null) return;
+	for (const child of Array.from(sizer.children)) {
+		if (/(^|\s)el-/.test(child.className)) continue;
+		const section = activeDocument.createElement('div');
+		section.className = `el-${child.tagName.toLowerCase()}`;
+		sizer.insertBefore(section, child);
+		section.appendChild(child);
+	}
+	const pusher = activeDocument.createElement('div');
+	pusher.className = 'markdown-preview-pusher';
+	pusher.setCssStyles({ width: '1px', height: '0.1px' });
+	sizer.prepend(pusher);
+}
+
+/**
+ * Keep a note inside its box, the way the board does.
+ *
+ * On screen a note taller than its box scrolls inside the box's border; nothing ever spills past
+ * it. Paper cannot scroll, and neither of the obvious substitutes is a replica: growing the box
+ * runs text across Excalidraw's drawn border (which stays the canvas size), and clipping silently
+ * loses lines. So an overflowing note is laid out smaller — `zoom` on the sizer, which reflows
+ * rather than just scaling a picture — until it fits. A note that already fits is untouched.
+ */
+function shrinkToFit(node: CanvasNode, boxHeight: number): void {
+	let zoom = 1;
+	for (let attempt = 0; attempt < 6; attempt++) {
+		const next = nextBoxZoom(zoom, neededHeight(node), boxHeight);
+		if (next === null) return;
+		zoom = next;
+		node.sizer.setCssProps({ zoom: String(zoom) });
+	}
+}
+
+/**
+ * The height a box's content really needs: from the top of the box to the bottom of the note's
+ * last block, plus whatever the box keeps below it (the bottom centring spacer's minimum and the
+ * view's bottom padding).
+ *
+ * Not `scrollHeight`. The sizer is `flex: 1 0 0` — it grows to fill the box — and the two centring
+ * spacers keep a minimum height on top of that, so `scrollHeight` reports a few pixels of overflow
+ * for every box, including one whose note is half its height (on screen that is a scrollable sliver
+ * of empty space nobody sees). Shrinking on it shrank every note on the board.
+ */
+function neededHeight(node: CanvasNode): number {
+	const view = node.previewView;
+	const window = view.ownerDocument.defaultView;
+	const last = node.sizer.lastElementChild;
+	if (window === null || last === null) return 0;
+	const lastMarginBottom = parseFloat(window.getComputedStyle(last).marginBottom) || 0;
+	const contentBottom = last.getBoundingClientRect().bottom + lastMarginBottom;
+	const below =
+		(parseFloat(window.getComputedStyle(view, '::after').minHeight) || 0) +
+		(parseFloat(window.getComputedStyle(view).paddingBottom) || 0);
+	return contentBottom - view.getBoundingClientRect().top + below;
 }
 
 /**

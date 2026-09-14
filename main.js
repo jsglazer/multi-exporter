@@ -4567,6 +4567,12 @@ function cssPixels(value) {
   const pixels = Number(match[1]);
   return pixels > 0 ? pixels : null;
 }
+var MIN_BOX_ZOOM = 0.5;
+function nextBoxZoom(current, contentHeight, boxHeight) {
+  if (boxHeight <= 0 || contentHeight <= boxHeight + 1) return null;
+  const next = Math.max(MIN_BOX_ZOOM, Math.round(current * (boxHeight / contentHeight) * 0.98 * 1e3) / 1e3);
+  return next >= current - 5e-3 ? null : next;
+}
 function resolveExportTarget(activeFile, enclosingBoards) {
   var _a;
   return (_a = enclosingBoards[enclosingBoards.length - 1]) != null ? _a : activeFile;
@@ -56203,7 +56209,8 @@ async function renderExcalidrawBoard(app, file, container, component, ancestors)
   const fontStacks = /* @__PURE__ */ new Set();
   for (const box of swapped) {
     if (box.canvasNode === null) continue;
-    releaseHeightIfOverflowing(box.canvasNode, box.declaredHeight);
+    wrapReadingSections(box.canvasNode.sizer);
+    shrinkToFit(box.canvasNode, box.declaredHeight);
     const wrapper = box.foreignObject.firstElementChild;
     if (wrapper === null) continue;
     wrapper.setCssProps(themeVariables);
@@ -56235,7 +56242,8 @@ async function renderEmbedBox(app, file, linkTarget, foreignObject, component, a
     await renderExcalidrawBoard(app, target, wrapper2, component, nextAncestors);
     return true;
   }
-  const targetMarkdown = await app.vault.cachedRead(target);
+  const source = await app.vault.cachedRead(target);
+  const targetMarkdown = source.slice((0, import_obsidian2.getFrontMatterInfo)(source).contentStart);
   const wrapper = replaceForeignObjectContent(foreignObject, () => void 0);
   const node = buildCanvasNode(wrapper, foreignObject);
   await import_obsidian2.MarkdownRenderer.render(app, targetMarkdown, node.sizer, target.path, component);
@@ -56261,11 +56269,40 @@ function buildCanvasNode(wrapper, foreignObject) {
   const previewView = embedContent.createDiv({ cls: "markdown-preview-view markdown-rendered" });
   const sizer = previewView.createDiv({ cls: "markdown-preview-sizer markdown-preview-section" });
   for (const level of [content, embedContent, previewView]) level.setCssStyles({ height: "100%", overflow: "visible" });
-  return { sized: [container, content, embedContent, previewView], previewView, sizer };
+  return { previewView, sizer };
 }
-function releaseHeightIfOverflowing(node, declaredHeight) {
-  if (node.previewView.scrollHeight <= declaredHeight + 1) return;
-  for (const level of node.sized) level.setCssStyles({ height: "auto" });
+function wrapReadingSections(sizer) {
+  if (sizer.querySelector(":scope > .markdown-preview-pusher") !== null) return;
+  for (const child of Array.from(sizer.children)) {
+    if (/(^|\s)el-/.test(child.className)) continue;
+    const section = activeDocument.createElement("div");
+    section.className = `el-${child.tagName.toLowerCase()}`;
+    sizer.insertBefore(section, child);
+    section.appendChild(child);
+  }
+  const pusher = activeDocument.createElement("div");
+  pusher.className = "markdown-preview-pusher";
+  pusher.setCssStyles({ width: "1px", height: "0.1px" });
+  sizer.prepend(pusher);
+}
+function shrinkToFit(node, boxHeight) {
+  let zoom = 1;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const next = nextBoxZoom(zoom, neededHeight(node), boxHeight);
+    if (next === null) return;
+    zoom = next;
+    node.sizer.setCssProps({ zoom: String(zoom) });
+  }
+}
+function neededHeight(node) {
+  const view = node.previewView;
+  const window2 = view.ownerDocument.defaultView;
+  const last2 = node.sizer.lastElementChild;
+  if (window2 === null || last2 === null) return 0;
+  const lastMarginBottom = parseFloat(window2.getComputedStyle(last2).marginBottom) || 0;
+  const contentBottom = last2.getBoundingClientRect().bottom + lastMarginBottom;
+  const below = (parseFloat(window2.getComputedStyle(view, "::after").minHeight) || 0) + (parseFloat(window2.getComputedStyle(view).paddingBottom) || 0);
+  return contentBottom - view.getBoundingClientRect().top + below;
 }
 function foreignObjectSize(foreignObject) {
   var _a, _b, _c, _d;

@@ -81,6 +81,23 @@ export function cssPixels(value: string | null | undefined): number | null {
 	return pixels > 0 ? pixels : null;
 }
 
+/** The smallest a note is shrunk to fit its box. Below this it is unreadable on paper anyway. */
+export const MIN_BOX_ZOOM = 0.5;
+
+/**
+ * The next `zoom` to lay a note out at so it fits its box, or `null` when it already fits (or
+ * cannot usefully shrink further).
+ *
+ * `contentHeight` includes the box's fixed padding and centring spacers, which do not shrink with
+ * the note, so a single proportional step undershoots; the caller iterates, and the 2% margin
+ * keeps a last line from landing exactly on the border.
+ */
+export function nextBoxZoom(current: number, contentHeight: number, boxHeight: number): number | null {
+	if (boxHeight <= 0 || contentHeight <= boxHeight + 1) return null;
+	const next = Math.max(MIN_BOX_ZOOM, Math.round(current * (boxHeight / contentHeight) * 0.98 * 1000) / 1000);
+	return next >= current - 0.005 ? null : next;
+}
+
 /**
  * Which note an "export the active note" command means.
  *
