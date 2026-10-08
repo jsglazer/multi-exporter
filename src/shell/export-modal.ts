@@ -219,6 +219,8 @@ export class ExportModal extends Modal {
 					}),
 			);
 
+		addOpenAfterExportToggle(controls, this.settings, this.service);
+
 		this.status = controls.createDiv({ cls: 'mx-export-status' });
 
 		const actions = contentEl.createDiv({ cls: 'mx-export-actions' });
@@ -445,6 +447,29 @@ export class ExportModal extends Modal {
 		this.backend = null;
 		this.contentEl.empty();
 	}
+}
+
+/**
+ * The "Open PDF after export" switch, on the export dialog itself.
+ *
+ * It is the settings-tab toggle of the same name, not a per-export override: whether a
+ * finished PDF should pop open is a habit, not a property of one note, so flipping it here
+ * is remembered — and the settings tab and every later dialog show the same value.
+ */
+export function addOpenAfterExportToggle(
+	containerEl: HTMLElement,
+	settings: PluginSettings,
+	service: ExportService,
+): void {
+	new Setting(containerEl)
+		.setName('Open PDF after export')
+		.setDesc('Only when the export writes a single file.')
+		.addToggle((toggle) =>
+			toggle.setValue(settings.openPdfAfterExport).onChange((value) => {
+				settings.openPdfAfterExport = value;
+				void service.saveSettings();
+			}),
+		);
 }
 
 export function describeError(error: unknown): string {

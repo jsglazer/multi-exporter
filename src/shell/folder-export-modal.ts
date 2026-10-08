@@ -6,7 +6,7 @@ import type { ExportPlan } from '../core/export-plan';
 import { sanitizeFileName } from '../core/paths';
 import type { BulkExportMode, PluginSettings, Profile } from '../core/types';
 import { announceOutcome, ExportService, maybeOpenExport } from './export-service';
-import { describeError } from './export-modal';
+import { addOpenAfterExportToggle, describeError } from './export-modal';
 
 /**
  * Bulk folder export.
@@ -91,6 +91,8 @@ export class FolderExportModal extends Modal {
 				if (next !== undefined) this.profile = next;
 			});
 		});
+
+		addOpenAfterExportToggle(contentEl, this.settings, this.service);
 
 		this.progressEl = contentEl.createDiv({ cls: 'mx-progress-list' });
 		this.progressEl.setText('Ready.');

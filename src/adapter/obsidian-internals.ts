@@ -18,6 +18,7 @@ import type { AnnotationCategoryColor, AnnotationCategoryColors, AnnotationStrip
  * | Chromium | 142.0.7444.265 | embedded version string |
  * | `zotero-manager` | API `version: 1` (plugin v1.1.9) | `src/api.ts`, read 2026-08-17 |
  * | `md-annotation` | v1.0.22, public `api` | `src/api.ts`, read 2026-08-29 |
+ * | `virtual-outliner` | v1.0.39, public `api.prepareRenderedExport` | `src/api.ts`, written 2026-10-08 |
  * | `obsidian-excalidraw-plugin` | v2.27.3, public `window.ExcalidrawAutomate` (`createSVG`, `getAPI`, `reset`, `addText`, `style.fontFamily`); canvas-file-node DOM (`.canvas-node-container > .canvas-node-content.markdown-embed > .markdown-embed-content > .markdown-preview-view`) it hosts embedded notes in; view type `excalidraw` and embedded-note leaves mounted inside the board view's DOM | `main.js`, read 2026-09-12 / 2026-09-13 |
  *
  * The audit named no Obsidian internal beyond these; in particular it specified no file

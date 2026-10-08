@@ -4,6 +4,8 @@ import { isExcalidrawNote } from '../core/excalidraw';
 import type { DocumentRenderer, RenderedNote } from '../core/pipeline';
 import { waitForDomStability } from './dom-stability';
 import { renderExcalidrawBoard } from './excalidraw-render';
+import { decorateOutline, prepareOutlinerExport } from './virtual-outliner';
+import type { OutlinerExport } from './virtual-outliner';
 
 /**
  * Rendering a note to DOM with Obsidian's own renderer.
@@ -33,6 +35,7 @@ export class ObsidianDocumentRenderer implements DocumentRenderer {
 		component.load();
 
 		const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+		let outline: OutlinerExport | null = null;
 		if (isExcalidrawNote(file.path, frontmatter)) {
 			// An .excalidraw.md file's own markdown is just the plugin's save-format scaffold;
 			// the canvas it actually draws is rendered by Excalidraw's own API instead. See
@@ -40,12 +43,16 @@ export class ObsidianDocumentRenderer implements DocumentRenderer {
 			await renderExcalidrawBoard(this.app, file, container, component, new Set([sourcePath]));
 		} else {
 			const markdown = await this.app.vault.cachedRead(file);
-			await MarkdownRenderer.render(this.app, markdown, container, sourcePath, component);
+			// A note outlined with `virtual-outliner` renders the outliner's version of its
+			// text, and is numbered and styled once the render has settled.
+			outline = prepareOutlinerExport(this.app, sourcePath, markdown);
+			await MarkdownRenderer.render(this.app, outline?.markdown ?? markdown, container, sourcePath, component);
 		}
 		// Dataview and Datacore render asynchronously and reactively, so the DOM is not
 		// finished when `render` resolves. Poll for stability rather than sleeping a fixed
 		// two seconds: a plain note settles in one poll, and a slow one is still correct.
 		await waitForDomStability(container);
+		if (outline !== null) decorateOutline(outline, container, sourcePath);
 
 		const cssClasses = normalizeCssClasses(frontmatter?.['cssclasses'] ?? frontmatter?.['cssclass']);
 		const note: RenderedNote = {

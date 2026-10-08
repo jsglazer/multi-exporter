@@ -56370,6 +56370,32 @@ function errorMessage(error2) {
   return error2 instanceof Error ? error2.message : String(error2);
 }
 
+// src/shell/virtual-outliner.ts
+var VIRTUAL_OUTLINER_ID = "virtual-outliner";
+function asApi2(candidate) {
+  if (candidate === null || typeof candidate !== "object") return null;
+  const api = candidate;
+  return typeof api.prepareRenderedExport === "function" ? api : null;
+}
+function prepareOutlinerExport(app, sourcePath, markdown) {
+  const api = asApi2(getPluginApi(app, VIRTUAL_OUTLINER_ID));
+  if (api === null) return null;
+  try {
+    const prepared = api.prepareRenderedExport(sourcePath, markdown);
+    return prepared !== null && typeof prepared.markdown === "string" && typeof prepared.decorate === "function" ? prepared : null;
+  } catch (error2) {
+    console.error("multi-exporter: virtual-outliner could not prepare", sourcePath, error2);
+    return null;
+  }
+}
+function decorateOutline(outline, root, sourcePath) {
+  try {
+    outline.decorate(root);
+  } catch (error2) {
+    console.error("multi-exporter: virtual-outliner could not decorate", sourcePath, error2);
+  }
+}
+
 // src/shell/render.ts
 var RENDER_HOST_CLASS = "mx-render-host";
 var ObsidianDocumentRenderer = class {
@@ -56379,21 +56405,24 @@ var ObsidianDocumentRenderer = class {
     this.components = /* @__PURE__ */ new WeakMap();
   }
   async render(sourcePath) {
-    var _a, _b;
+    var _a, _b, _c;
     const file = this.app.vault.getAbstractFileByPath(sourcePath);
     if (!(file instanceof import_obsidian3.TFile)) throw new Error(`Not a note: ${sourcePath}`);
     const container = this.host.createDiv({ cls: RENDER_HOST_CLASS });
     const component = new import_obsidian3.Component();
     component.load();
     const frontmatter = (_a = this.app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
+    let outline = null;
     if (isExcalidrawNote(file.path, frontmatter)) {
       await renderExcalidrawBoard(this.app, file, container, component, /* @__PURE__ */ new Set([sourcePath]));
     } else {
       const markdown = await this.app.vault.cachedRead(file);
-      await import_obsidian3.MarkdownRenderer.render(this.app, markdown, container, sourcePath, component);
+      outline = prepareOutlinerExport(this.app, sourcePath, markdown);
+      await import_obsidian3.MarkdownRenderer.render(this.app, (_b = outline == null ? void 0 : outline.markdown) != null ? _b : markdown, container, sourcePath, component);
     }
     await waitForDomStability(container);
-    const cssClasses = normalizeCssClasses((_b = frontmatter == null ? void 0 : frontmatter["cssclasses"]) != null ? _b : frontmatter == null ? void 0 : frontmatter["cssclass"]);
+    if (outline !== null) decorateOutline(outline, container, sourcePath);
+    const cssClasses = normalizeCssClasses((_c = frontmatter == null ? void 0 : frontmatter["cssclasses"]) != null ? _c : frontmatter == null ? void 0 : frontmatter["cssclass"]);
     const note = {
       sourcePath,
       title: file.basename,
@@ -57058,6 +57087,7 @@ var ExportModal = class extends import_obsidian6.Modal {
         this.fileName = value;
       })
     );
+    addOpenAfterExportToggle(controls, this.settings, this.service);
     this.status = controls.createDiv({ cls: "mx-export-status" });
     const actions = contentEl.createDiv({ cls: "mx-export-actions" });
     new import_obsidian6.Setting(actions).addButton(
@@ -57244,6 +57274,14 @@ var ExportModal = class extends import_obsidian6.Modal {
     this.contentEl.empty();
   }
 };
+function addOpenAfterExportToggle(containerEl, settings, service) {
+  new import_obsidian6.Setting(containerEl).setName("Open PDF after export").setDesc("Only when the export writes a single file.").addToggle(
+    (toggle) => toggle.setValue(settings.openPdfAfterExport).onChange((value) => {
+      settings.openPdfAfterExport = value;
+      void service.saveSettings();
+    })
+  );
+}
 function describeError(error2) {
   return error2 instanceof Error ? error2.message : String(error2);
 }
@@ -57312,6 +57350,7 @@ var FolderExportModal = class extends import_obsidian7.Modal {
         if (next !== void 0) this.profile = next;
       });
     });
+    addOpenAfterExportToggle(contentEl, this.settings, this.service);
     this.progressEl = contentEl.createDiv({ cls: "mx-progress-list" });
     this.progressEl.setText("Ready.");
     new import_obsidian7.Setting(contentEl.createDiv({ cls: "mx-export-actions" })).addButton(
