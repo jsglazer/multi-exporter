@@ -39615,6 +39615,13 @@ function planPerNoteNumbering(documentStartPages, pageCount) {
 var MAX_PAGES_WIDE = 10;
 var MAX_PAGES_TALL = 200;
 var MIN_CONTENT_SCALE = 0.4;
+var MAX_CONTENT_SCALE = 2;
+function layoutZoom(page) {
+  if (page.fitToPage === true) return 1;
+  const factor = page.printScale / 100;
+  if (!Number.isFinite(factor) || factor <= 0) return 1;
+  return Math.min(MAX_CONTENT_SCALE, Math.max(MIN_CONTENT_SCALE, factor));
+}
 var MAX_FIT_ATTEMPTS = 4;
 function clampPagesWide(value) {
   if (typeof value !== "number" || !Number.isFinite(value)) return 1;
@@ -39632,10 +39639,10 @@ function nextContentScale(current, pageCount, target) {
   return next;
 }
 function contentScaleCss(scale2) {
-  if (!Number.isFinite(scale2) || scale2 >= 1) return "";
-  const bounded = Math.max(MIN_CONTENT_SCALE, scale2);
+  if (!Number.isFinite(scale2) || scale2 === 1) return "";
+  const bounded = Math.min(MAX_CONTENT_SCALE, Math.max(MIN_CONTENT_SCALE, scale2));
   return `
-/* Fit to page count: lay the flow out smaller so more of it fits on each page. */
+/* Layout zoom: lay the flow out at this scale, before pagination. */
 .pagedjs_page_content > div { zoom: ${bounded}; }
 `;
 }
@@ -39936,10 +39943,10 @@ var PagedJsWebviewBackend = class {
       );
       return await this.readPageMap(webview);
     };
-    let map = await layOut(1);
+    let scale2 = layoutZoom(page);
+    let map = await layOut(scale2);
     const target = page.fitToPage === true ? clampPagesTall(page.fitPagesTall) : 0;
     if (target === 0) return map;
-    let scale2 = 1;
     for (let attempt = 0; attempt < MAX_FIT_ATTEMPTS; attempt++) {
       const next = nextContentScale(scale2, map.pageCount, target);
       if (next === null) break;
@@ -40085,7 +40092,9 @@ var PagedJsWebviewBackend = class {
   /**
    * The print scale for this export.
    *
-   * `fitToPage` off is the simple case: the profile's percentage, verbatim. On, the guest
+   * `fitToPage` off prints unscaled: the profile's percentage is a layout zoom, already
+   * applied before pagination (`layoutZoom`), and applying it again here would scale the
+   * whole sheet — margins and furniture included — a second time. On, the guest
    * measures the worst overflow across the finished pages and this prints at exactly the
    * scale that brings it inside the page box.
    *
@@ -40097,7 +40106,7 @@ var PagedJsWebviewBackend = class {
    * derived from a failed measurement.
    */
   async resolveScale(webview, page) {
-    if (page.fitToPage !== true) return clampScale(page.printScale / 100);
+    if (page.fitToPage !== true) return 1;
     try {
       const measured = await webview.run(fitScaleScript(page.fitAxis, clampPagesWide(page.fitPagesWide)));
       return clampScale(measured);
@@ -56971,9 +56980,10 @@ var ExportModal = class extends import_obsidian6.Modal {
      *
      * Moved with both page inputs empty, it also turns fitting off for this export.
      *
-     * The same number `printScale` has always been — Chromium's print scale, applied to the
-     * finished pages — reached from the modal rather than only from the profile, because
-     * "this one note wants to be smaller" is a per-export thought, not a per-profile one.
+     * The profile's `printScale`, reached from the modal rather than only from the profile,
+     * because "this one note wants to be smaller" is a per-export thought, not a per-profile
+     * one. It is a layout zoom applied before pagination (`layoutZoom`), so the preview
+     * re-paginates when it moves.
      */
     this.zoom = null;
     /**
@@ -57158,21 +57168,24 @@ var ExportModal = class extends import_obsidian6.Modal {
       this.fail(error2);
     }
   }
-  /** The page-count target this export will actually use, profile default included. */
-  pagesTallTarget() {
+  /**
+   * What of the fit inputs reaches the pagination: the page-count target and the layout zoom,
+   * profile defaults included. Pages wide is left out — it only tunes the print-time fit.
+   */
+  layoutKey() {
     const page = this.effectiveProfile().page;
-    return page.fitToPage ? clampPagesTall(page.fitPagesTall) : 0;
+    return `${page.fitToPage ? clampPagesTall(page.fitPagesTall) : 0}|${layoutZoom(page)}`;
   }
   /**
-   * Change a fit input, then re-paginate only if that changed the page-count target. The print
-   * scale is applied by `printToPDF` after the pages are laid out, so it changes nothing on
-   * screen — but a page target changes the pagination itself, and the preview is the output.
+   * Change a fit input, then re-paginate if that changed the layout. Both a page target and
+   * the zoom are applied before pagination, so either one changes what is on screen, and the
+   * preview is the output.
    */
   updateFitInputs(change) {
-    const before = this.pagesTallTarget();
+    const before = this.layoutKey();
     change();
     this.syncFitControls();
-    if (this.pagesTallTarget() !== before) void this.repaginate();
+    if (this.layoutKey() !== before) void this.repaginate();
   }
   /**
    * Grey out the zoom slider while a page input has a number.
@@ -57724,7 +57737,7 @@ var MultiExporterSettingTab = class extends import_obsidian9.PluginSettingTab {
         })
       );
     } else {
-      new import_obsidian9.Setting(editor).setName("Print scale").setDesc("Percentage the finished pages are printed at, where 100 is unscaled.").addSlider(
+      new import_obsidian9.Setting(editor).setName("Zoom").setDesc("Percentage the text is laid out at before pagination, where 100 is unscaled. Margins and headers keep their size.").addSlider(
         (slider) => slider.setLimits(40, 200, 5).setValue(clampPercent(profile.page.printScale)).setDynamicTooltip().onChange(async (value) => {
           profile.page.printScale = value;
           await this.save();

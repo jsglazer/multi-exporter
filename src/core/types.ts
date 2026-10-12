@@ -82,9 +82,9 @@ export interface PageConfig {
 	 * page rather than shrinking it — which reads as "the export lost half the note".
 	 *
 	 * On, the export measures the worst overflow on the finished pages and prints at exactly
-	 * the scale that brings it inside the box; off, `printScale` is used verbatim. Either way
-	 * it is Chromium's own print scale, applied to the whole document, so text and figures
-	 * keep their relative sizes.
+	 * the scale that brings it inside the box, as Chromium's own print scale applied to the
+	 * whole document, so text and figures keep their relative sizes. Off, `printScale` is
+	 * applied as a layout zoom before pagination instead and the PDF prints unscaled.
 	 */
 	fitToPage: boolean;
 	/**
@@ -123,7 +123,10 @@ export interface PageConfig {
 	 * `core/fit-pages.ts`.
 	 */
 	fitPagesTall: number;
-	/** Print scale as a percentage, used when `fitToPage` is off. 100 is unscaled. */
+	/**
+	 * Layout zoom as a percentage, used when `fitToPage` is off. 100 is unscaled. The name is
+	 * historical: it is applied to the flow before pagination, not as Chromium's print scale.
+	 */
 	printScale: number;
 	orphans: number;
 	widows: number;

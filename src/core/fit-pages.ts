@@ -38,6 +38,28 @@ export const MAX_PAGES_TALL = 200;
  */
 export const MIN_CONTENT_SCALE = 0.4;
 
+/** The ceiling on a layout zoom — the zoom slider's 200%. */
+export const MAX_CONTENT_SCALE = 2;
+
+/**
+ * The layout zoom one export starts from, as a factor.
+ *
+ * `printScale` used to be Chromium's print scale, applied to the finished pages while the PDF
+ * was written — after the preview had been drawn, so the preview never showed it, and moving
+ * the zoom slider changed nothing on screen. It is now a layout zoom on paged.js's flow
+ * wrapper (`contentScaleCss`), applied *before* pagination: the preview re-paginates and shows
+ * exactly what prints, the page count follows the zoom, and the margins and running
+ * furniture keep their size because they live outside the wrapper.
+ *
+ * With `fitToPage` on the fit owns the scale and this is 1, as it always was.
+ */
+export function layoutZoom(page: PageConfig): number {
+	if (page.fitToPage === true) return 1;
+	const factor = page.printScale / 100;
+	if (!Number.isFinite(factor) || factor <= 0) return 1;
+	return Math.min(MAX_CONTENT_SCALE, Math.max(MIN_CONTENT_SCALE, factor));
+}
+
 /**
  * How many extra paginations the search may spend.
  *
@@ -101,13 +123,16 @@ export function nextContentScale(current: number, pageCount: number, target: num
  * undocumented coupling like the class names in the adapter; it is one rule, and it fails
  * visibly — the page count simply does not move — rather than silently corrupting output.
  *
- * A scale of 1 emits nothing at all, so an export with no page target is byte-for-byte the
- * stylesheet it was before this existed.
+ * The same rule carries the zoom slider (`layoutZoom`), in both directions: above 1 the flow
+ * gets fewer CSS pixels and renders larger, so the document takes more pages.
+ *
+ * A scale of 1 emits nothing at all, so an export with no page target and no zoom is
+ * byte-for-byte the stylesheet it was before this existed.
  */
 export function contentScaleCss(scale: number): string {
-	if (!Number.isFinite(scale) || scale >= 1) return '';
-	const bounded = Math.max(MIN_CONTENT_SCALE, scale);
-	return `\n/* Fit to page count: lay the flow out smaller so more of it fits on each page. */\n.pagedjs_page_content > div { zoom: ${bounded}; }\n`;
+	if (!Number.isFinite(scale) || scale === 1) return '';
+	const bounded = Math.min(MAX_CONTENT_SCALE, Math.max(MIN_CONTENT_SCALE, scale));
+	return `\n/* Layout zoom: lay the flow out at this scale, before pagination. */\n.pagedjs_page_content > div { zoom: ${bounded}; }\n`;
 }
 
 /**

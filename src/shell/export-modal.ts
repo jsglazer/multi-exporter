@@ -6,7 +6,7 @@ import { composeCss } from '../core/pipeline';
 import { isExcalidrawNote } from '../core/excalidraw';
 import { resolveProfileByCssClasses, resolveProfileForExcalidraw, resolveProfileForPath } from '../core/profile-resolver';
 import { structuredCloneProfile } from '../core/profiles';
-import { applyFitInputs, clampPagesTall, clampPagesWide } from '../core/fit-pages';
+import { applyFitInputs, clampPagesTall, clampPagesWide, layoutZoom } from '../core/fit-pages';
 import type { AnnotationMode, PluginSettings, Profile } from '../core/types';
 import { announceOutcome, ExportService, maybeOpenExport } from './export-service';
 import { PagedJsWebviewBackend, wrapDocumentSections } from './pagedjs-backend';
@@ -40,9 +40,10 @@ export class ExportModal extends Modal {
 	 *
 	 * Moved with both page inputs empty, it also turns fitting off for this export.
 	 *
-	 * The same number `printScale` has always been — Chromium's print scale, applied to the
-	 * finished pages — reached from the modal rather than only from the profile, because
-	 * "this one note wants to be smaller" is a per-export thought, not a per-profile one.
+	 * The profile's `printScale`, reached from the modal rather than only from the profile,
+	 * because "this one note wants to be smaller" is a per-export thought, not a per-profile
+	 * one. It is a layout zoom applied before pagination (`layoutZoom`), so the preview
+	 * re-paginates when it moves.
 	 */
 	private zoom: number | null = null;
 	/**
@@ -312,22 +313,25 @@ export class ExportModal extends Modal {
 		}
 	}
 
-	/** The page-count target this export will actually use, profile default included. */
-	private pagesTallTarget(): number {
+	/**
+	 * What of the fit inputs reaches the pagination: the page-count target and the layout zoom,
+	 * profile defaults included. Pages wide is left out — it only tunes the print-time fit.
+	 */
+	private layoutKey(): string {
 		const page = this.effectiveProfile().page;
-		return page.fitToPage ? clampPagesTall(page.fitPagesTall) : 0;
+		return `${page.fitToPage ? clampPagesTall(page.fitPagesTall) : 0}|${layoutZoom(page)}`;
 	}
 
 	/**
-	 * Change a fit input, then re-paginate only if that changed the page-count target. The print
-	 * scale is applied by `printToPDF` after the pages are laid out, so it changes nothing on
-	 * screen — but a page target changes the pagination itself, and the preview is the output.
+	 * Change a fit input, then re-paginate if that changed the layout. Both a page target and
+	 * the zoom are applied before pagination, so either one changes what is on screen, and the
+	 * preview is the output.
 	 */
 	private updateFitInputs(change: () => void): void {
-		const before = this.pagesTallTarget();
+		const before = this.layoutKey();
 		change();
 		this.syncFitControls();
-		if (this.pagesTallTarget() !== before) void this.repaginate();
+		if (this.layoutKey() !== before) void this.repaginate();
 	}
 
 	/**

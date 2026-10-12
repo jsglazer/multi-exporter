@@ -17,6 +17,7 @@ import {
 	clampPagesTall,
 	clampPagesWide,
 	contentScaleCss,
+	layoutZoom,
 	MAX_FIT_ATTEMPTS,
 	nextContentScale,
 } from '../core/fit-pages';
@@ -289,11 +290,12 @@ export class PagedJsWebviewBackend implements ExportBackend {
 			return await this.readPageMap(webview);
 		};
 
-		let map = await layOut(1);
+		// The zoom slider's scale, or 1 while fitting owns it — see `layoutZoom`.
+		let scale = layoutZoom(page);
+		let map = await layOut(scale);
 		const target = page.fitToPage === true ? clampPagesTall(page.fitPagesTall) : 0;
 		if (target === 0) return map;
 
-		let scale = 1;
 		for (let attempt = 0; attempt < MAX_FIT_ATTEMPTS; attempt++) {
 			const next = nextContentScale(scale, map.pageCount, target);
 			if (next === null) break;
@@ -484,7 +486,9 @@ export class PagedJsWebviewBackend implements ExportBackend {
 	/**
 	 * The print scale for this export.
 	 *
-	 * `fitToPage` off is the simple case: the profile's percentage, verbatim. On, the guest
+	 * `fitToPage` off prints unscaled: the profile's percentage is a layout zoom, already
+	 * applied before pagination (`layoutZoom`), and applying it again here would scale the
+	 * whole sheet — margins and furniture included — a second time. On, the guest
 	 * measures the worst overflow across the finished pages and this prints at exactly the
 	 * scale that brings it inside the page box.
 	 *
@@ -496,7 +500,7 @@ export class PagedJsWebviewBackend implements ExportBackend {
 	 * derived from a failed measurement.
 	 */
 	private async resolveScale(webview: PreviewWebview, page: PageConfig): Promise<number> {
-		if (page.fitToPage !== true) return clampScale(page.printScale / 100);
+		if (page.fitToPage !== true) return 1;
 		try {
 			const measured = await webview.run<number>(fitScaleScript(page.fitAxis, clampPagesWide(page.fitPagesWide)));
 			return clampScale(measured);

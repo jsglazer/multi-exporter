@@ -333,8 +333,8 @@ export class MultiExporterSettingTab extends PluginSettingTab {
 				);
 		} else {
 			new Setting(editor)
-				.setName('Print scale')
-				.setDesc('Percentage the finished pages are printed at, where 100 is unscaled.')
+				.setName('Zoom')
+				.setDesc('Percentage the text is laid out at before pagination, where 100 is unscaled. Margins and headers keep their size.')
 				.addSlider((slider) =>
 					slider
 						.setLimits(40, 200, 5)

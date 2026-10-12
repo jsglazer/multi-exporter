@@ -5,6 +5,8 @@ import {
 	clampPagesTall,
 	clampPagesWide,
 	contentScaleCss,
+	layoutZoom,
+	MAX_CONTENT_SCALE,
 	MAX_FIT_ATTEMPTS,
 	MIN_CONTENT_SCALE,
 	nextContentScale,
@@ -116,8 +118,13 @@ describe('contentScaleCss', () => {
 	// An export with no page target must produce byte-for-byte the stylesheet it always did.
 	it('emits nothing at all when nothing is being scaled', () => {
 		expect(contentScaleCss(1)).toBe('');
-		expect(contentScaleCss(1.4)).toBe('');
 		expect(contentScaleCss(Number.NaN)).toBe('');
+	});
+
+	// The zoom slider goes up to 200%, so the flow can be laid out larger as well as smaller.
+	it('zooms up as well as down, capped at the slider maximum', () => {
+		expect(contentScaleCss(1.4)).toContain('zoom: 1.4');
+		expect(contentScaleCss(5)).toContain(`zoom: ${MAX_CONTENT_SCALE}`);
 	});
 
 	// `zoom`, not `transform`: a transform is applied after layout, so the chunker would break
@@ -131,6 +138,29 @@ describe('contentScaleCss', () => {
 
 	it('holds the floor even when handed something smaller', () => {
 		expect(contentScaleCss(0.05)).toContain(`zoom: ${MIN_CONTENT_SCALE}`);
+	});
+});
+
+describe('layoutZoom', () => {
+	const base = { fitToPage: false, printScale: 100 } as unknown as PageConfig;
+
+	// The bug this exists for: the zoom was only ever a print scale, applied after the preview
+	// was drawn, so the preview never changed. It has to reach the pagination.
+	it('turns the zoom percentage into a layout factor', () => {
+		expect(layoutZoom({ ...base, printScale: 80 })).toBe(0.8);
+		expect(layoutZoom({ ...base, printScale: 150 })).toBe(1.5);
+		expect(layoutZoom(base)).toBe(1);
+	});
+
+	it('is 1 while fitting owns the scale', () => {
+		expect(layoutZoom({ ...base, fitToPage: true, printScale: 60 })).toBe(1);
+	});
+
+	it('survives a hand-edited settings file', () => {
+		expect(layoutZoom({ ...base, printScale: Number.NaN })).toBe(1);
+		expect(layoutZoom({ ...base, printScale: 0 })).toBe(1);
+		expect(layoutZoom({ ...base, printScale: 10 })).toBe(MIN_CONTENT_SCALE);
+		expect(layoutZoom({ ...base, printScale: 900 })).toBe(MAX_CONTENT_SCALE);
 	});
 });
 
